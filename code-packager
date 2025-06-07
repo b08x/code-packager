@@ -4,19 +4,19 @@
 VERSION="0.3.1"
 
 # Default values
-INCLUDE_EXT=()     # Array to store include extensions
-EXCLUDE_EXT=()     # Array to store exclude extensions
-INCLUDE_FILES=()   # Array to store include filenames
-EXCLUDE_FILES=()   # Array to store exclude filenames
-MAX_SIZE=10240     # 10MB in KB
-RESPECT_GITIGNORE=1  # Enable respecting files as per .gitignore by default
-INCLUDE_DOT_FILES=0  # Exclude dot files and folders by default
-DIRECTORY_PATH=""    # Initialize directory path as empty
-OUTPUT_FILE=""       # Initialize output file path as empty
-ZIP_OUTPUT=0         # Disable zipping the output file by default
-USE_SELECTOR=""      # File/folder selector mode: tui, gui, or empty for manual
-VECTOR_STORE_FORMAT=0  # Enable vector store optimized format
-MAX_DEPTH=""         # Maximum search depth (unlimited by default)
+INCLUDE_EXT=()        # Array to store include extensions
+EXCLUDE_EXT=()        # Array to store exclude extensions
+INCLUDE_FILES=()      # Array to store include filenames
+EXCLUDE_FILES=()      # Array to store exclude filenames
+MAX_SIZE=10240        # 10MB in KB
+RESPECT_GITIGNORE=1   # Enable respecting files as per .gitignore by default
+INCLUDE_DOT_FILES=0   # Exclude dot files and folders by default
+DIRECTORY_PATH=""     # Initialize directory path as empty
+OUTPUT_FILE=""        # Initialize output file path as empty
+ZIP_OUTPUT=0          # Disable zipping the output file by default
+USE_SELECTOR=""       # File/folder selector mode: tui, gui, or empty for manual
+VECTOR_STORE_FORMAT=0 # Enable vector store optimized format
+MAX_DEPTH=""          # Maximum search depth (unlimited by default)
 
 # Function to display help
 show_help() {
@@ -71,22 +71,22 @@ check_dependencies() {
     local dependencies=("jq" "git" "file" "zip" "fd")
     local missing_deps=0
     for dep in "${dependencies[@]}"; do
-        if ! command -v "$dep" &> /dev/null; then
+        if ! command -v "$dep" &>/dev/null; then
             echo "Error: Required dependency '$dep' is not installed."
             missing_deps=1
         fi
     done
-    
+
     # Check optional dependencies based on selector mode
-    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "fzf" &> /dev/null; then
+    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "fzf" &>/dev/null; then
         echo "Error: 'fzf' is required for TUI selector mode."
         missing_deps=1
     fi
-    if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &> /dev/null; then
+    if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &>/dev/null; then
         echo "Error: 'yad' is required for GUI selector mode."
         missing_deps=1
     fi
-    
+
     if [ "$missing_deps" -ne 0 ]; then
         echo "Please install the missing dependencies and try again."
         exit 1
@@ -102,23 +102,23 @@ use_fzf_selector() {
             exit 1
         fi
     fi
-    
+
     # Multi-select files and folders to include
     echo "Select files and folders to include (TAB to select multiple, ENTER to confirm):"
     selected_items=$(fd . "$DIRECTORY_PATH" | fzf --multi --prompt="Select items: " --header="TAB=select, ENTER=confirm, ESC=cancel" --preview="file {}" --preview-window=right:50%:wrap)
-    
+
     if [ -z "$selected_items" ]; then
         echo "No items selected. Using all files in directory."
     else
         # Create a temporary file list
         temp_file_list=$(mktemp)
-        echo "$selected_items" > "$temp_file_list"
-        
+        echo "$selected_items" >"$temp_file_list"
+
         # Override the fd command to only process selected files
         SELECTED_FILES_LIST="$temp_file_list"
         export SELECTED_FILES_LIST
     fi
-    
+
     if [ -z "$OUTPUT_FILE" ]; then
         OUTPUT_FILE=$(echo "" | fzf --print-query --prompt="Output file: " --header="Enter output JSON filename")
         if [ -z "$OUTPUT_FILE" ]; then
@@ -134,38 +134,38 @@ use_fzf_selector() {
 # Function to use yad for GUI file/folder selection
 use_yad_selector() {
     if [ -z "$DIRECTORY_PATH" ]; then
-        DIRECTORY_PATH=$(yad --file-selection --directory --title="Select Directory to Package")
+        DIRECTORY_PATH=$(yad --file --directory --title="Select Directory to Package")
         if [ -z "$DIRECTORY_PATH" ]; then
             echo "No directory selected. Exiting."
             exit 1
         fi
     fi
-    
+
     # Multi-select files and folders using yad checklist
     # First get the list of files using fd
     file_list=$(fd --type f . "$DIRECTORY_PATH")
-    
+
     if [ -n "$file_list" ]; then
         # Create a temporary yad checklist
         yad_items=""
         while IFS= read -r file; do
             filename=$(basename "$file")
             yad_items+="FALSE|$file|$filename\n"
-        done <<< "$file_list"
-        
+        done <<<"$file_list"
+
         # Show yad checklist for file selection
         selected_files=$(echo -e "$yad_items" | yad --list --checklist --title="Select Files to Include" \
             --text="Select files to include in the package:" \
             --column="Select" --column="Full Path" --column="Filename" \
             --width=800 --height=600 \
             --separator="|")
-        
+
         if [ -n "$selected_files" ]; then
             # Create a temporary file list
             temp_file_list=$(mktemp)
             # Extract the selected file paths (second column)
-            echo "$selected_files" | tr '|' '\n' | sed -n '2~3p' > "$temp_file_list"
-            
+            echo "$selected_files" | tr '|' '\n' | sed -n '2~3p' >"$temp_file_list"
+
             # Override the fd command to only process selected files
             SELECTED_FILES_LIST="$temp_file_list"
             export SELECTED_FILES_LIST
@@ -173,9 +173,9 @@ use_yad_selector() {
             echo "No files selected. Using all files in directory."
         fi
     fi
-    
+
     if [ -z "$OUTPUT_FILE" ]; then
-        OUTPUT_FILE=$(yad --file-selection --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
+        OUTPUT_FILE=$(yad --file --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
         if [ -z "$OUTPUT_FILE" ]; then
             echo "No output file selected. Exiting."
             exit 1
@@ -186,55 +186,66 @@ use_yad_selector() {
 # Parse command line arguments
 while getopts "t:o:i:I:e:E:s:g:d:z:m:S:Vvh-" opt; do
     case $opt in
-        t) DIRECTORY_PATH="${OPTARG}" ;;
-        o) OUTPUT_FILE="${OPTARG}" ;;
-        i) INCLUDE_EXT+=("${OPTARG}") ;;
-        I) INCLUDE_FILES+=("${OPTARG}") ;;
-        e) EXCLUDE_EXT+=("${OPTARG}") ;;
-        E) EXCLUDE_FILES+=("${OPTARG}") ;;
-        s) MAX_SIZE="${OPTARG}"
-            # Validate if MAX_SIZE is a valid number
-            if ! [[ "$MAX_SIZE" =~ ^[0-9]+$ ]]; then
-                echo "Error: Invalid value for -s option. Please provide a positive integer."
-                exit 1
-            fi
+    t) DIRECTORY_PATH="${OPTARG}" ;;
+    o) OUTPUT_FILE="${OPTARG}" ;;
+    i) INCLUDE_EXT+=("${OPTARG}") ;;
+    I) INCLUDE_FILES+=("${OPTARG}") ;;
+    e) EXCLUDE_EXT+=("${OPTARG}") ;;
+    E) EXCLUDE_FILES+=("${OPTARG}") ;;
+    s)
+        MAX_SIZE="${OPTARG}"
+        # Validate if MAX_SIZE is a valid number
+        if ! [[ "$MAX_SIZE" =~ ^[0-9]+$ ]]; then
+            echo "Error: Invalid value for -s option. Please provide a positive integer."
+            exit 1
+        fi
+        ;;
+    g) RESPECT_GITIGNORE="${OPTARG}" ;;
+    d) INCLUDE_DOT_FILES="${OPTARG}" ;;
+    z) ZIP_OUTPUT="${OPTARG}" ;;
+    m) MAX_DEPTH="${OPTARG}" ;;
+    S) USE_SELECTOR="${OPTARG}" ;;
+    V) VECTOR_STORE_FORMAT=1 ;;
+    v)
+        show_version
+        exit 0
+        ;;
+    h)
+        show_help
+        exit 0
+        ;;
+    -) case "${OPTARG}" in
+        version)
+            show_version
+            exit 0
             ;;
-        g) RESPECT_GITIGNORE="${OPTARG}" ;;
-        d) INCLUDE_DOT_FILES="${OPTARG}" ;;
-        z) ZIP_OUTPUT="${OPTARG}" ;;
-        m) MAX_DEPTH="${OPTARG}" ;;
-        S) USE_SELECTOR="${OPTARG}" ;;
-        V) VECTOR_STORE_FORMAT=1 ;;
-        v) show_version
-           exit 0 ;;
-        h) show_help
-           exit 0 ;;
-        -) case "${OPTARG}" in
-             version) show_version
-                      exit 0 ;;
-             help) show_help
-                  exit 0 ;;
-             *) echo "Error: Invalid option -${OPTARG}. Use -h or --help for usage information." >&2
-                exit 1 ;;
-           esac ;;
+        help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Invalid option -${OPTARG}. Use -h or --help for usage information." >&2
+            exit 1
+            ;;
+        esac ;;
     esac
 done
 
 # Use file/folder selectors if specified
 case "$USE_SELECTOR" in
-    "tui")
-        use_fzf_selector
-        ;;
-    "gui")
-        use_yad_selector
-        ;;
-    "")
-        # No selector, continue with normal validation
-        ;;
-    *)
-        echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for fzf or 'gui' for yad."
-        exit 1
-        ;;
+"tui")
+    use_fzf_selector
+    ;;
+"gui")
+    use_yad_selector
+    ;;
+"")
+    # No selector, continue with normal validation
+    ;;
+*)
+    echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for fzf or 'gui' for yad."
+    exit 1
+    ;;
 esac
 
 # Ensure required parameters are provided
@@ -246,8 +257,8 @@ fi
 
 # Check if directory exists
 if [[ ! -d "$DIRECTORY_PATH" ]]; then
-  echo "Error: Directory '$DIRECTORY_PATH' does not exist."
-  exit 1
+    echo "Error: Directory '$DIRECTORY_PATH' does not exist."
+    exit 1
 fi
 
 # Determine the output file name if a directory is specified
@@ -259,8 +270,8 @@ fi
 # Validate output file path
 output_dir=$(dirname "$OUTPUT_FILE")
 if [[ ! -d "$output_dir" || ! -w "$output_dir" ]]; then
-  echo "Error: Cannot write to output directory '$output_dir'."
-  exit 1
+    echo "Error: Cannot write to output directory '$output_dir'."
+    exit 1
 fi
 
 # Check dependencies before proceeding
@@ -289,16 +300,16 @@ fi
 # Function to process each file
 process_file() {
     local file="$1"
-    
+
     local filesize=$($STAT_CMD "$file")
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
         local full_path="${dirpath}/${filename}"
-        
+
         if is_binary "$file"; then
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                local content=$(jq -Rs . <<< "File: ${full_path}
+                local content=$(jq -Rs . <<<"File: ${full_path}
 
 [Binary file - content not included]")
             else
@@ -307,14 +318,14 @@ process_file() {
         else
             local file_content=$(cat "$file")
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                local content=$(jq -Rs . <<< "File: ${full_path}
+                local content=$(jq -Rs . <<<"File: ${full_path}
 
 ${file_content}")
             else
-                local content=$(jq -Rs . < "$file")
+                local content=$(jq -Rs . <"$file")
             fi
         fi
-        
+
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
             echo "{\"content\":$content, \"metadata\":{\"filename\":\"$filename\", \"path\":\"$dirpath/\", \"full_path\":\"$full_path\"}}"
         else
@@ -414,15 +425,15 @@ else
     # Use normal fd command
     fd_result=$(eval "$fd_command")
     if [[ $? -ne 0 ]]; then
-      echo "Error: fd command failed with error:"
-      echo "$fd_result"
-      exit 1
+        echo "Error: fd command failed with error:"
+        echo "$fd_result"
+        exit 1
     fi
 fi
 json_array=$(echo "$fd_result" | xargs -I {} bash -c 'process_file "{}"' | jq -s .)
 
 # Output the JSON object using jq and pretty print
-echo "{\"files\":$json_array}" | jq . > "$OUTPUT_FILE"
+echo "{\"files\":$json_array}" | jq . >"$OUTPUT_FILE"
 
 # Zip the output file if requested
 if [ "$ZIP_OUTPUT" -eq 1 ]; then
