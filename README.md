@@ -8,7 +8,7 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
 
 ### Change Log
 
-- [Jun 07, 2025] Added GUI/TUI file selectors and vector store optimized format
+- [Jun 07, 2025] Enhanced TUI selector with step-by-step workflow and improved directory/file filtering
 - [Nov 10, 2024] Added support for including/excluding specific filenames using `-I` and `-E` options
 - [Sep 15, 2024] `code-unpackager` script added
 - [Jun 22, 2024] `max_depth` option added
@@ -20,10 +20,15 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
   - `code-packager` handles various file types and sizes, allowing you to include or exclude specific extensions or filenames, respect `.gitignore` rules, and optionally zip archive the resulting JSON file for efficient storage and sharing.
   - `code-unpackager` restores the packaged JSON back to its original directory structure, making it easy to manage and modify your codebase.
 - 🎯 **Interactive File Selection:**
-  - TUI mode with `fzf` for command-line interactive directory and file selection with multi-select support (TAB to select multiple)
-  - GUI mode with `yad` for graphical file/folder browsing and selection with multi-select (Ctrl+click)
-  - Cherry-pick specific files and folders instead of using extension-based filtering
-  - Streamlines workflow by eliminating the need to remember or type file paths
+  - **TUI mode** with `gum` provides a step-by-step workflow:
+    1. Select base directory to package
+    2. Choose top-level directories to include
+    3. Select subdirectories to exclude (fine-tuning)
+    4. Choose file types to exclude
+    5. Set output filename
+  - **GUI mode** with `yad` for graphical file/folder browsing and selection with multi-select (Ctrl+click)
+  - **Smart filtering** where directory exclusions take precedence over file type inclusions
+  - **Hidden directory support** - when dot files are enabled (`-d 1`), hidden directories like `.git`, `.vscode` appear in the selector for explicit inclusion/exclusion
 - 🚀 **Vector Store Optimized Format:**
   - Special `-V` flag creates vector store optimized JSON format that embeds filename information directly into file content
   - Ensures filename context is preserved when content is chunked by vector databases
@@ -60,13 +65,13 @@ That's it! The `code-packager` and `code-unpackager` commands should now be avai
 - `file`
 - `zip`
 - `fd` (modern find replacement)
-- `fzf` (optional, for TUI file selector)
+- `gum` (for TUI file selector)
 - `yad` (optional, for GUI file selector)
 
 On a Debian-based Linux distribution, you can install these dependencies with:
 
 ```bash
-sudo apt-get install git jq file zip fd-find fzf yad
+sudo apt-get install git jq file zip fd-find gum yad
 ```
 
 Note: On some distributions, `fd` may be packaged as `fd-find`.
@@ -111,7 +116,7 @@ code-packager -t <directory_path> -o <output_file> [options]
 *   `-g <respect_gitignore>`: Set to `1` to respect `.gitignore`, `0` to ignore (default: `1`).
 *   `-d <include_dot_files>`: Set to `1` to include dot files and folders, `0` to exclude (default: `0`).
 *   `-z <zip_output>`: Set to `1` to zip the output JSON file, `0` to leave uncompressed (default: `0`).
-*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection with multi-select (TAB to select multiple), `gui` for yad-based graphical selection with multi-select (Ctrl+click for multiple files).
+*   `-S <selector_mode>`: Use file/folder selector: `tui` for gum-based interactive step-by-step workflow, `gui` for yad-based graphical selection with multi-select (Ctrl+click for multiple files).
 *   `-V`: Enable vector store optimized format (embeds filename in content for better chunking).
 *   `-m <max_depth>`: Limit the maximum depth of the search (default: unlimited).
 *   `-v, --version`: Display the version of the script and exit.
@@ -205,13 +210,18 @@ code-packager -t ~/myproject -o code.json -i .py -i .js -I README -E TODO.md
 
 This command packages Python and JavaScript files along with the `README` file, but excludes `TODO.md`.
 
-**10. Interactive TUI File Selection with Multi-Select:**
+**10. Interactive TUI Step-by-Step Workflow:**
 
 ```bash
 code-packager -S tui -o code.json
 ```
 
-This command opens an interactive fzf-based file browser to select the target directory, then allows multi-selecting specific files using TAB. Use ENTER to confirm selection.
+This command opens an interactive gum-based step-by-step workflow to:
+1. Select the base directory to package
+2. Choose which top-level directories to include (e.g., `src`, `lib`, `docs`)
+3. Optionally exclude specific subdirectories
+4. Select file types to exclude (e.g., `.log`, `.tmp`, `.cache`)
+5. Set the output filename
 
 **11. Interactive GUI File Selection with Multi-Select:**
 

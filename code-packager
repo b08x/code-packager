@@ -1,13 +1,16 @@
 #!/bin/bash
 
 # Version information
-VERSION="0.3.1"
+VERSION="0.4.0"
 
 # Default values
 INCLUDE_EXT=()        # Array to store include extensions
 EXCLUDE_EXT=()        # Array to store exclude extensions
 INCLUDE_FILES=()      # Array to store include filenames
 EXCLUDE_FILES=()      # Array to store exclude filenames
+EXCLUDE_DIRS=()       # Array to store exclude directories
+INCLUDE_DIRS=()       # Array to store include directories
+EXCLUDE_NO_EXT=0      # Flag to exclude files without extensions
 MAX_SIZE=10240        # 10MB in KB
 RESPECT_GITIGNORE=1   # Enable respecting files as per .gitignore by default
 INCLUDE_DOT_FILES=0   # Exclude dot files and folders by default
@@ -37,7 +40,7 @@ show_help() {
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
     echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
     echo "  -n <project_name>       Project name for full_path construction (prompts if not provided with -V)."
-    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf (with multi-select), 'gui' for yad (with multi-select)."
+    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for gum (interactive workflow), 'gui' for yad (with multi-select)."
     echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
     echo "  -h, --help              Display this help and exit."
@@ -70,7 +73,7 @@ is_binary() {
 
 # Check for required dependencies
 check_dependencies() {
-    local dependencies=("jq" "git" "file" "zip" "fd")
+    local dependencies=("jq" "git" "file" "zip" "fd" "gum")
     local missing_deps=0
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
@@ -80,8 +83,8 @@ check_dependencies() {
     done
 
     # Check optional dependencies based on selector mode
-    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "fzf" &>/dev/null; then
-        echo "Error: 'fzf' is required for TUI selector mode."
+    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "gum" &>/dev/null; then
+        echo "Error: 'gum' is required for TUI selector mode."
         missing_deps=1
     fi
     if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &>/dev/null; then
@@ -99,42 +102,133 @@ check_dependencies() {
     fi
 }
 
-# Function to use fzf for TUI file/folder selection
-use_fzf_selector() {
+# Function to use gum for interactive selection workflow
+use_gum_selector() {
+    # Step 1: Select base directory
     if [ -z "$DIRECTORY_PATH" ]; then
-        DIRECTORY_PATH=$(find . -type d | fzf --prompt="Select directory: " --header="Choose target directory")
+        gum style --foreground 212 --border-foreground 212 --border double --align center --width 50 --margin "1 2" --padding "2 4" "Code Packager Setup"
+
+        DIRECTORY_PATH=$(gum input --placeholder "Enter directory path (or '.' for current)" --header "Step 1: Select base directory to package")
         if [ -z "$DIRECTORY_PATH" ]; then
-            echo "No directory selected. Exiting."
+            DIRECTORY_PATH="."
+        fi
+
+        # Validate directory exists
+        if [[ ! -d "$DIRECTORY_PATH" ]]; then
+            gum style --foreground 196 "Error: Directory '$DIRECTORY_PATH' does not exist."
             exit 1
         fi
+
+        gum style --foreground 46 "Selected directory: $DIRECTORY_PATH"
     fi
 
-    # Multi-select files and folders to include
-    echo "Select files and folders to include (TAB to select multiple, ENTER to confirm):"
-    selected_items=$(fd . "$DIRECTORY_PATH" | fzf --multi --prompt="Select items: " --header="TAB=select, ENTER=confirm, ESC=cancel" --preview="file {}" --preview-window=right:50%:wrap)
+    # Step 2: Select top-level directories to include (depth 1)
+    gum style --foreground 212 "Step 2: Select top-level directories to include (optional)"
+    
+    # Include hidden directories if dot files are enabled
+    fd_dir_cmd="fd --type d --max-depth 1"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_dir_cmd+=" --hidden"
+    fi
+    fd_dir_cmd+=" . '$DIRECTORY_PATH'"
+    
+    top_level_dirs=$(eval "$fd_dir_cmd" | sed "s|^$DIRECTORY_PATH/||" | sed 's|/$||' | grep -v '^$' | sort)
 
-    if [ -z "$selected_items" ]; then
-        echo "No items selected. Using all files in directory."
+    if [ -n "$top_level_dirs" ]; then
+        selected_include_dirs=$(echo "$top_level_dirs" | gum choose --no-limit --header "Select top-level directories to include (Space to select, Enter to skip for all):")
+
+        if [ -n "$selected_include_dirs" ]; then
+            while IFS= read -r dir; do
+                INCLUDE_DIRS+=("$dir")
+            done <<<"$selected_include_dirs"
+            gum style --foreground 46 "Including directories: $(printf '%s, ' "${INCLUDE_DIRS[@]}" | sed 's/, $//')"
+
+            # Step 2b: Select subdirectories to exclude from included directories
+            gum style --foreground 212 "Step 2b: Select subdirectories to exclude (optional)"
+            subdirs_to_exclude=""
+            for included_dir in "${INCLUDE_DIRS[@]}"; do
+                subdirs=$(fd --type d . "$DIRECTORY_PATH/$included_dir" | sed "s|^$DIRECTORY_PATH/||" | grep -v "^$included_dir$" | sort)
+                if [ -n "$subdirs" ]; then
+                    subdirs_to_exclude+="$subdirs"$'\n'
+                fi
+            done
+
+            if [ -n "$subdirs_to_exclude" ]; then
+                selected_exclude_subdirs=$(echo "$subdirs_to_exclude" | sort | uniq | gum choose --no-limit --header "Select subdirectories to exclude (Space to select, Enter to confirm):")
+
+                if [ -n "$selected_exclude_subdirs" ]; then
+                    while IFS= read -r dir; do
+                        EXCLUDE_DIRS+=("$dir")
+                    done <<<"$selected_exclude_subdirs"
+                    gum style --foreground 220 "Excluded subdirectories: $(printf '%s, ' "${EXCLUDE_DIRS[@]}" | sed 's/, $//')"
+                else
+                    gum style --foreground 46 "No subdirectories excluded"
+                fi
+            else
+                gum style --foreground 46 "No subdirectories found in selected directories"
+            fi
+        else
+            gum style --foreground 46 "No directories selected - including all"
+        fi
     else
-        # Create a temporary file list
-        temp_file_list=$(mktemp)
-        echo "$selected_items" >"$temp_file_list"
-
-        # Override the fd command to only process selected files
-        SELECTED_FILES_LIST="$temp_file_list"
-        export SELECTED_FILES_LIST
+        gum style --foreground 46 "No top-level directories found"
     fi
 
+    # Step 3: Select file types to exclude
+    gum style --foreground 212 "Step 3: Select file types to exclude (optional)"
+    # Get all files and extract extensions, including files without extensions
+    available_extensions=$(fd --type f . "$DIRECTORY_PATH" | while read -r file; do
+        # Get just the filename without path
+        filename=$(basename "$file")
+        if [[ "$filename" == *.* ]]; then
+            echo "${filename##*.}"
+        else
+            echo "(no extension)"
+        fi
+    done | sort | uniq | head -20)
+
+    if [ -n "$available_extensions" ]; then
+        selected_exclude_exts=$(echo "$available_extensions" | gum choose --no-limit --header "Select file extensions to exclude (Space to select, Enter to confirm):")
+
+        if [ -n "$selected_exclude_exts" ]; then
+            while IFS= read -r ext; do
+                if [ "$ext" = "(no extension)" ]; then
+                    # Special handling for files without extensions - we'll handle this differently
+                    EXCLUDE_NO_EXT=1
+                else
+                    EXCLUDE_EXT+=(".$ext")
+                fi
+            done <<<"$selected_exclude_exts"
+            gum style --foreground 220 "Excluded extensions: $(printf '%s, ' "${EXCLUDE_EXT[@]}" | sed 's/, $//')"
+        else
+            gum style --foreground 46 "No file types excluded"
+        fi
+    else
+        gum style --foreground 46 "No file extensions found"
+    fi
+
+    # Step 4: Set output file
     if [ -z "$OUTPUT_FILE" ]; then
-        OUTPUT_FILE=$(echo "" | fzf --print-query --prompt="Output file: " --header="Enter output JSON filename")
+        default_output="$(basename "$DIRECTORY_PATH").json"
+        OUTPUT_FILE=$(gum input --placeholder "$default_output" --header "Step 4: Enter output filename" --value "$default_output")
         if [ -z "$OUTPUT_FILE" ]; then
-            OUTPUT_FILE="output.json"
+            OUTPUT_FILE="$default_output"
         fi
         # Add .json extension if not present
         if [[ "$OUTPUT_FILE" != *.json ]]; then
             OUTPUT_FILE="${OUTPUT_FILE}.json"
         fi
+        gum style --foreground 46 "Output file: $OUTPUT_FILE"
     fi
+
+    # Summary
+    gum style --foreground 212 --border-foreground 212 --border rounded --align left --width 60 --margin "1 2" --padding "1 2" \
+        "Summary:" \
+        "Base directory: $DIRECTORY_PATH" \
+        "Included directories: ${#INCLUDE_DIRS[@]} selected" \
+        "Excluded subdirectories: ${#EXCLUDE_DIRS[@]} selected" \
+        "Excluded extensions: ${#EXCLUDE_EXT[@]} selected" \
+        "Output file: $OUTPUT_FILE"
 }
 
 # Function to use yad for GUI file/folder selection
@@ -150,7 +244,7 @@ use_yad_selector() {
     # Multi-select files using yad file selection with multiple flag
     # Change to the target directory and use multiple file selection
     cd "$DIRECTORY_PATH" || exit 1
-    
+
     # Use yad file selection with multiple flag
     selected_files=$(yad --file --multiple --title="Select Files to Include" \
         --text="Select files to include in the package (Ctrl+click for multiple):" \
@@ -161,19 +255,19 @@ use_yad_selector() {
         # Create a temporary file list
         temp_file_list=$(mktemp)
         # Split the pipe-separated paths and write to temp file
-        echo "$selected_files" | tr '|' '\n' > "$temp_file_list"
+        echo "$selected_files" | tr '|' '\n' >"$temp_file_list"
 
         # Override the fd command to only process selected files
         SELECTED_FILES_LIST="$temp_file_list"
         export SELECTED_FILES_LIST
-        
-        echo "Selected $(wc -l < "$temp_file_list") files for processing."
+
+        echo "Selected $(wc -l <"$temp_file_list") files for processing."
     else
         echo "No files selected. Using all files in directory."
     fi
-    
+
     # Change back to original directory
-    cd - > /dev/null || exit 1
+    cd - >/dev/null || exit 1
 
     if [ -z "$OUTPUT_FILE" ]; then
         OUTPUT_FILE=$(yad --file --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
@@ -236,7 +330,7 @@ done
 # Use file/folder selectors if specified
 case "$USE_SELECTOR" in
 "tui")
-    use_fzf_selector
+    use_gum_selector
     ;;
 "gui")
     use_yad_selector
@@ -245,7 +339,7 @@ case "$USE_SELECTOR" in
     # No selector, continue with normal validation
     ;;
 *)
-    echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for fzf or 'gui' for yad."
+    echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for gum or 'gui' for yad."
     exit 1
     ;;
 esac
@@ -362,6 +456,8 @@ fd_command="fd"
 # File type: only regular files
 fd_command+=" --type f"
 
+# Note: We'll clean up ./ prefixes in the output processing
+
 # Handle gitignore settings
 if [ "$RESPECT_GITIGNORE" -eq 0 ]; then
     fd_command+=" --no-ignore-vcs"
@@ -380,21 +476,54 @@ fi
 # Add size filter - fd uses native size filtering
 fd_command+=" --size -${MAX_SIZE}k"
 
-# Handle extensions - fd has native support
+# Handle directory inclusions/exclusions FIRST (highest priority)
+if [ ${#INCLUDE_DIRS[@]} -gt 0 ]; then
+    # If specific directories were selected to include, exclude all other TOP-LEVEL DIRECTORIES only
+    # This should NOT exclude root-level files
+    # Use the same hidden directory detection as in the selector
+    fd_all_dirs_cmd="fd --type d --max-depth 1"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_all_dirs_cmd+=" --hidden"
+    fi
+    fd_all_dirs_cmd+=" . '$DIRECTORY_PATH'"
+    
+    all_top_level_dirs=$(eval "$fd_all_dirs_cmd" | sed "s|^$DIRECTORY_PATH/||" | sed 's|/$||' | grep -v '^$')
+    if [ -n "$all_top_level_dirs" ]; then
+        while IFS= read -r dir; do
+            if ! printf '%s\n' "${INCLUDE_DIRS[@]}" | grep -q "^$dir$"; then
+                # Exclude the entire directory and its contents
+                fd_command+=" --exclude '$dir'"
+            fi
+        done <<<"$all_top_level_dirs"
+    fi
+fi
+
+# Handle specific directory exclusions (subdirectories)
+for dir in "${EXCLUDE_DIRS[@]}"; do
+    fd_command+=" --exclude '$dir/*'"
+done
+
+# Handle file extension exclusions
+for ext in "${EXCLUDE_EXT[@]}"; do
+    fd_command+=" --exclude '*$ext'"
+done
+
+# Handle extensions - fd has native support (applied after exclusions)
 for ext in "${INCLUDE_EXT[@]}"; do
     # Remove leading dot if present since fd -e expects extension without dot
     clean_ext="${ext#.}"
     fd_command+=" -e $clean_ext"
 done
 
-# Handle exclusions
-for ext in "${EXCLUDE_EXT[@]}"; do
-    fd_command+=" --exclude '*$ext'"
-done
-
 for filename in "${EXCLUDE_FILES[@]}"; do
     fd_command+=" --exclude '$filename'"
 done
+
+# Handle exclusion of files without extensions
+if [ "$EXCLUDE_NO_EXT" -eq 1 ]; then
+    # This is complex with fd - we'll handle it in post-processing instead
+    EXCLUDE_NO_EXT_POST=1
+fi
 
 # For include filenames, we need to use a pattern
 # If we have specific filenames to include and no extensions, use pattern matching
@@ -432,6 +561,8 @@ fi
 
 # Debug: show the fd command being executed
 # echo "Debug: $fd_command"
+# echo "INCLUDE_DIRS: ${INCLUDE_DIRS[@]}"
+# echo "EXCLUDE_DIRS: ${EXCLUDE_DIRS[@]}"
 
 # Execute fd command and process files
 if [ -n "$SELECTED_FILES_LIST" ] && [ -f "$SELECTED_FILES_LIST" ]; then
@@ -471,7 +602,7 @@ echo "JSON output saved to: $OUTPUT_FILE"
 # Generate directory tree
 echo "Directory tree:"
 if [ -n "$fd_result" ]; then
-    echo "$fd_result"
+    echo "$fd_result" | sed 's|^\./||'
 else
-    eval "$fd_command"
+    eval "$fd_command" | sed 's|^\./||'
 fi
