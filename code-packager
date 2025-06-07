@@ -17,6 +17,7 @@ ZIP_OUTPUT=0          # Disable zipping the output file by default
 USE_SELECTOR=""       # File/folder selector mode: tui, gui, or empty for manual
 VECTOR_STORE_FORMAT=0 # Enable vector store optimized format
 MAX_DEPTH=""          # Maximum search depth (unlimited by default)
+PROJECT_NAME=""       # Project name for full_path construction
 
 # Function to display help
 show_help() {
@@ -35,6 +36,7 @@ show_help() {
     echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
     echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
+    echo "  -n <project_name>       Project name for full_path construction (prompts if not provided with -V)."
     echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf (with multi-select), 'gui' for yad (with multi-select)."
     echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
@@ -84,6 +86,10 @@ check_dependencies() {
     fi
     if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &>/dev/null; then
         echo "Error: 'yad' is required for GUI selector mode."
+        missing_deps=1
+    fi
+    if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -z "$PROJECT_NAME" ] && ! command -v "gum" &>/dev/null; then
+        echo "Error: 'gum' is required for project name prompting in vector store mode."
         missing_deps=1
     fi
 
@@ -179,7 +185,7 @@ use_yad_selector() {
 }
 
 # Parse command line arguments
-while getopts "t:o:i:I:e:E:s:g:d:z:m:S:Vvh-" opt; do
+while getopts "t:o:i:I:e:E:s:g:d:z:m:n:S:Vvh-" opt; do
     case $opt in
     t) DIRECTORY_PATH="${OPTARG}" ;;
     o) OUTPUT_FILE="${OPTARG}" ;;
@@ -199,6 +205,7 @@ while getopts "t:o:i:I:e:E:s:g:d:z:m:S:Vvh-" opt; do
     d) INCLUDE_DOT_FILES="${OPTARG}" ;;
     z) ZIP_OUTPUT="${OPTARG}" ;;
     m) MAX_DEPTH="${OPTARG}" ;;
+    n) PROJECT_NAME="${OPTARG}" ;;
     S) USE_SELECTOR="${OPTARG}" ;;
     V) VECTOR_STORE_FORMAT=1 ;;
     v)
@@ -272,6 +279,17 @@ fi
 # Check dependencies before proceeding
 check_dependencies
 
+# Prompt for project name if using vector store format and none provided
+if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -z "$PROJECT_NAME" ]; then
+    # Default to directory name if no project name provided
+    default_name=$(basename "$(realpath "$DIRECTORY_PATH")")
+    PROJECT_NAME=$(gum input --placeholder="Enter project name" --value="$default_name" --header="Project name for full_path construction:")
+    if [ -z "$PROJECT_NAME" ]; then
+        PROJECT_NAME="$default_name"
+    fi
+    echo "Using project name: $PROJECT_NAME"
+fi
+
 # Normalize the include and exclude extensions to ensure they start with a dot
 for i in "${!INCLUDE_EXT[@]}"; do
     if [[ "${INCLUDE_EXT[$i]}" != "" && "${INCLUDE_EXT[$i]:0:1}" != "." ]]; then
@@ -300,7 +318,13 @@ process_file() {
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
-        local full_path="${dirpath}/${filename}"
+        # Construct full_path with project name prefix for vector store format
+        if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
+            local rel_path=$(realpath --relative-to="$DIRECTORY_PATH" "$file")
+            local full_path="$PROJECT_NAME/$rel_path"
+        else
+            local full_path=$(realpath "$file")
+        fi
 
         if is_binary "$file"; then
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
@@ -330,7 +354,7 @@ ${file_content}")
 }
 
 export -f process_file is_binary
-export STAT_CMD MAX_SIZE DIRECTORY_PATH VECTOR_STORE_FORMAT
+export STAT_CMD MAX_SIZE DIRECTORY_PATH VECTOR_STORE_FORMAT PROJECT_NAME
 
 # Construct the fd command
 fd_command="fd"
