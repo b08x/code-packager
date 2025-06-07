@@ -43,7 +43,7 @@ Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fd-find fzf yad`
 # Use TUI selector (fzf) for interactive file/folder selection with multi-select
 ./code-packager -S tui -o output.json
 
-# Use GUI selector (yad) for interactive file/folder selection with checklist
+# Use GUI selector (yad) for interactive file/folder selection with multi-select
 ./code-packager -S gui -o output.json
 
 # Unpack with confirmation
@@ -61,7 +61,7 @@ Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fd-find fzf yad`
 - **Git Integration**: Native gitignore support via `fd --no-ignore-vcs` flag
 - **JSON Output**: Uses `jq` for structured JSON generation with file metadata (filename, content, path)
 - **Vector Store Format**: New `-V` flag creates content-embedded format for better vector store chunking
-- **Interactive Selectors**: TUI mode (`-S tui`) uses `fzf` with multi-select (TAB) for cherry-picking files; GUI mode (`-S gui`) uses `yad` checklist interface
+- **Interactive Selectors**: TUI mode (`-S tui`) uses `fzf` with multi-select (TAB) for cherry-picking files; GUI mode (`-S gui`) uses `yad` multi-select file dialog (Ctrl+click)
 - **Advanced Filtering**: Native support for file extensions (`-e`), size limits (`--size`), and hidden files (`--hidden`)
 - **Parallel Processing**: Exports functions and uses `xargs` with `bash -c` for efficient file processing
 

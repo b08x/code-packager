@@ -21,7 +21,7 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
   - `code-unpackager` restores the packaged JSON back to its original directory structure, making it easy to manage and modify your codebase.
 - 🎯 **Interactive File Selection:**
   - TUI mode with `fzf` for command-line interactive directory and file selection with multi-select support (TAB to select multiple)
-  - GUI mode with `yad` for graphical file/folder browsing and selection with checklist interface
+  - GUI mode with `yad` for graphical file/folder browsing and selection with multi-select (Ctrl+click)
   - Cherry-pick specific files and folders instead of using extension-based filtering
   - Streamlines workflow by eliminating the need to remember or type file paths
 - 🚀 **Vector Store Optimized Format:**
@@ -111,7 +111,7 @@ code-packager -t <directory_path> -o <output_file> [options]
 *   `-g <respect_gitignore>`: Set to `1` to respect `.gitignore`, `0` to ignore (default: `1`).
 *   `-d <include_dot_files>`: Set to `1` to include dot files and folders, `0` to exclude (default: `0`).
 *   `-z <zip_output>`: Set to `1` to zip the output JSON file, `0` to leave uncompressed (default: `0`).
-*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection with multi-select (TAB to select multiple), `gui` for yad-based graphical selection with checklist.
+*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection with multi-select (TAB to select multiple), `gui` for yad-based graphical selection with multi-select (Ctrl+click for multiple files).
 *   `-V`: Enable vector store optimized format (embeds filename in content for better chunking).
 *   `-m <max_depth>`: Limit the maximum depth of the search (default: unlimited).
 *   `-v, --version`: Display the version of the script and exit.
@@ -213,13 +213,13 @@ code-packager -S tui -o code.json
 
 This command opens an interactive fzf-based file browser to select the target directory, then allows multi-selecting specific files using TAB. Use ENTER to confirm selection.
 
-**11. Interactive GUI File Selection with Checklist:**
+**11. Interactive GUI File Selection with Multi-Select:**
 
 ```bash
 code-packager -S gui -o code.json
 ```
 
-This command opens a graphical yad-based file browser to select the target directory, then shows a checklist interface to select specific files to include.
+This command opens a graphical yad-based file browser to select the target directory, then opens a file selection dialog where you can select multiple files using Ctrl+click.
 
 **12. Vector Store Optimized Format:**
 

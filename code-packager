@@ -35,7 +35,7 @@ show_help() {
     echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
     echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
-    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf (with multi-select), 'gui' for yad (with checklist)."
+    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf (with multi-select), 'gui' for yad (with multi-select)."
     echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
     echo "  -h, --help              Display this help and exit."
@@ -141,38 +141,33 @@ use_yad_selector() {
         fi
     fi
 
-    # Multi-select files and folders using yad checklist
-    # First get the list of files using fd
-    file_list=$(fd --type f . "$DIRECTORY_PATH")
+    # Multi-select files using yad file selection with multiple flag
+    # Change to the target directory and use multiple file selection
+    cd "$DIRECTORY_PATH" || exit 1
+    
+    # Use yad file selection with multiple flag
+    selected_files=$(yad --file --multiple --title="Select Files to Include" \
+        --text="Select files to include in the package (Ctrl+click for multiple):" \
+        --width=800 --height=600 \
+        --separator="|")
 
-    if [ -n "$file_list" ]; then
-        # Create a temporary yad checklist
-        yad_items=""
-        while IFS= read -r file; do
-            filename=$(basename "$file")
-            yad_items+="FALSE|$file|$filename\n"
-        done <<<"$file_list"
+    if [ -n "$selected_files" ]; then
+        # Create a temporary file list
+        temp_file_list=$(mktemp)
+        # Split the pipe-separated paths and write to temp file
+        echo "$selected_files" | tr '|' '\n' > "$temp_file_list"
 
-        # Show yad checklist for file selection
-        selected_files=$(echo -e "$yad_items" | yad --list --checklist --title="Select Files to Include" \
-            --text="Select files to include in the package:" \
-            --column="Select" --column="Full Path" --column="Filename" \
-            --width=800 --height=600 \
-            --separator="|")
-
-        if [ -n "$selected_files" ]; then
-            # Create a temporary file list
-            temp_file_list=$(mktemp)
-            # Extract the selected file paths (second column)
-            echo "$selected_files" | tr '|' '\n' | sed -n '2~3p' >"$temp_file_list"
-
-            # Override the fd command to only process selected files
-            SELECTED_FILES_LIST="$temp_file_list"
-            export SELECTED_FILES_LIST
-        else
-            echo "No files selected. Using all files in directory."
-        fi
+        # Override the fd command to only process selected files
+        SELECTED_FILES_LIST="$temp_file_list"
+        export SELECTED_FILES_LIST
+        
+        echo "Selected $(wc -l < "$temp_file_list") files for processing."
+    else
+        echo "No files selected. Using all files in directory."
     fi
+    
+    # Change back to original directory
+    cd - > /dev/null || exit 1
 
     if [ -z "$OUTPUT_FILE" ]; then
         OUTPUT_FILE=$(yad --file --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
