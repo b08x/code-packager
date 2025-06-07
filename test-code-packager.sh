@@ -182,6 +182,31 @@ test_nonexistent_filename() {
     rm -rf "$temp_dir"
 }
 
+# Test case 17: Vector store format
+test_vector_store_format() {
+    local temp_dir=$(mktemp -d)
+    echo "Hello World" > "$temp_dir/test.txt"
+    local options="-t $temp_dir -o code.json -V"
+    local expected_output_pattern=$'JSON output saved to: code.json\nDirectory tree:'
+    run_test "Vector store format" "$options" "$expected_output_pattern"
+    validate_json "code.json"
+    
+    # Check if vector store format is used (should have metadata field)
+    if jq -e '.files[0] | has("metadata")' code.json > /dev/null; then
+        echo "Vector store format validation passed."
+    else
+        echo "Vector store format validation failed."
+    fi
+    rm -rf "$temp_dir"
+}
+
+# Test case 18: Invalid selector mode
+test_invalid_selector() {
+    local options="-t $current_dir -o code.json -S invalid"
+    local expected_output_pattern="Error: Invalid selector mode 'invalid'. Use 'tui' for fzf or 'gui' for yad."
+    run_test "Invalid selector mode" "$options" "$expected_output_pattern"
+}
+
 # Cleanup function to remove generated files
 cleanup() {
     rm -f code.json code.zip empty_dir.json gitignore_test.json output.json
@@ -204,6 +229,8 @@ test_exclude_specific_filenames
 test_combine_extensions_and_filenames
 test_case_sensitivity
 test_nonexistent_filename
+test_vector_store_format
+test_invalid_selector
 
 # Cleanup generated files
 cleanup

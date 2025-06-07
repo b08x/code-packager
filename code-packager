@@ -14,6 +14,8 @@ INCLUDE_DOT_FILES=0  # Exclude dot files and folders by default
 DIRECTORY_PATH=""    # Initialize directory path as empty
 OUTPUT_FILE=""       # Initialize output file path as empty
 ZIP_OUTPUT=0         # Disable zipping the output file by default
+USE_SELECTOR=""      # File/folder selector mode: tui, gui, or empty for manual
+VECTOR_STORE_FORMAT=0  # Enable vector store optimized format
 
 # Function to display help
 show_help() {
@@ -31,6 +33,8 @@ show_help() {
     echo "  -g <respect_gitignore>  0 to disable, 1 to enable respecting files as per .gitignore (default: enabled)."
     echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
+    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf, 'gui' for yad."
+    echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
     echo "  -h, --help              Display this help and exit."
     echo ""
@@ -70,14 +74,66 @@ check_dependencies() {
             missing_deps=1
         fi
     done
+    
+    # Check optional dependencies based on selector mode
+    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "fzf" &> /dev/null; then
+        echo "Error: 'fzf' is required for TUI selector mode."
+        missing_deps=1
+    fi
+    if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &> /dev/null; then
+        echo "Error: 'yad' is required for GUI selector mode."
+        missing_deps=1
+    fi
+    
     if [ "$missing_deps" -ne 0 ]; then
         echo "Please install the missing dependencies and try again."
         exit 1
     fi
 }
 
+# Function to use fzf for TUI file/folder selection
+use_fzf_selector() {
+    if [ -z "$DIRECTORY_PATH" ]; then
+        DIRECTORY_PATH=$(find . -type d | fzf --prompt="Select directory: " --header="Choose target directory")
+        if [ -z "$DIRECTORY_PATH" ]; then
+            echo "No directory selected. Exiting."
+            exit 1
+        fi
+    fi
+    
+    if [ -z "$OUTPUT_FILE" ]; then
+        OUTPUT_FILE=$(echo "" | fzf --print-query --prompt="Output file: " --header="Enter output JSON filename")
+        if [ -z "$OUTPUT_FILE" ]; then
+            OUTPUT_FILE="output.json"
+        fi
+        # Add .json extension if not present
+        if [[ "$OUTPUT_FILE" != *.json ]]; then
+            OUTPUT_FILE="${OUTPUT_FILE}.json"
+        fi
+    fi
+}
+
+# Function to use yad for GUI file/folder selection
+use_yad_selector() {
+    if [ -z "$DIRECTORY_PATH" ]; then
+        DIRECTORY_PATH=$(yad --file-selection --directory --title="Select Directory to Package")
+        if [ -z "$DIRECTORY_PATH" ]; then
+            echo "No directory selected. Exiting."
+            exit 1
+        fi
+    fi
+    
+    if [ -z "$OUTPUT_FILE" ]; then
+        OUTPUT_FILE=$(yad --file-selection --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
+        if [ -z "$OUTPUT_FILE" ]; then
+            echo "No output file selected. Exiting."
+            exit 1
+        fi
+    fi
+}
+
 # Parse command line arguments
-while getopts "t:o:i:I:e:E:s:g:d:z:vh-" opt; do
+while getopts "t:o:i:I:e:E:s:g:d:z:S:Vvh-" opt; do
     case $opt in
         t) DIRECTORY_PATH="${OPTARG}" ;;
         o) OUTPUT_FILE="${OPTARG}" ;;
@@ -95,6 +151,8 @@ while getopts "t:o:i:I:e:E:s:g:d:z:vh-" opt; do
         g) RESPECT_GITIGNORE="${OPTARG}" ;;
         d) INCLUDE_DOT_FILES="${OPTARG}" ;;
         z) ZIP_OUTPUT="${OPTARG}" ;;
+        S) USE_SELECTOR="${OPTARG}" ;;
+        V) VECTOR_STORE_FORMAT=1 ;;
         v) show_version
            exit 0 ;;
         h) show_help
@@ -109,6 +167,23 @@ while getopts "t:o:i:I:e:E:s:g:d:z:vh-" opt; do
            esac ;;
     esac
 done
+
+# Use file/folder selectors if specified
+case "$USE_SELECTOR" in
+    "tui")
+        use_fzf_selector
+        ;;
+    "gui")
+        use_yad_selector
+        ;;
+    "")
+        # No selector, continue with normal validation
+        ;;
+    *)
+        echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for fzf or 'gui' for yad."
+        exit 1
+        ;;
+esac
 
 # Ensure required parameters are provided
 if [ -z "$DIRECTORY_PATH" ]; then
@@ -171,19 +246,39 @@ process_file() {
 
     local filesize=$($STAT_CMD "$file")
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
-        if is_binary "$file"; then
-            local content="null" # Do not include content for binary files
-        else
-            local content=$(jq -Rs . < "$file")
-        fi
         local filename=$(basename "$file")
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
-        echo "{\"filename\":\"$filename\", \"content\":$content, \"path\":\"$dirpath/\"}"
+        local full_path="${dirpath}/${filename}"
+        
+        if is_binary "$file"; then
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                local content=$(jq -Rs . <<< "File: ${full_path}
+
+[Binary file - content not included]")
+            else
+                local content="null" # Do not include content for binary files
+            fi
+        else
+            local file_content=$(cat "$file")
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                local content=$(jq -Rs . <<< "File: ${full_path}
+
+${file_content}")
+            else
+                local content=$(jq -Rs . < "$file")
+            fi
+        fi
+        
+        if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+            echo "{\"content\":$content, \"metadata\":{\"filename\":\"$filename\", \"path\":\"$dirpath/\", \"full_path\":\"$full_path\"}}"
+        else
+            echo "{\"filename\":\"$filename\", \"content\":$content, \"path\":\"$dirpath/\"}"
+        fi
     fi
 }
 
 export -f process_file is_binary
-export STAT_CMD MAX_SIZE DIRECTORY_PATH RESPECT_GITIGNORE INCLUDE_DOT_FILES
+export STAT_CMD MAX_SIZE DIRECTORY_PATH RESPECT_GITIGNORE INCLUDE_DOT_FILES VECTOR_STORE_FORMAT
 
 # Construct the find command
 find_command="find \"$DIRECTORY_PATH\" -type f"

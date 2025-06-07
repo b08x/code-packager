@@ -24,7 +24,7 @@ run_test() {
     echo "------------------------"
 }
 
-# Function to create a test JSON file
+# Function to create a test JSON file (legacy format)
 create_test_json() {
     cat << EOF > test.json
 {
@@ -54,10 +54,36 @@ create_test_json() {
 EOF
 }
 
+# Function to create a test JSON file (vector store format)
+create_vector_store_json() {
+    cat << EOF > test_vector.json
+{
+  "files": [
+    {
+      "content": "File: /test.txt\n\nThis is a test file for vector store format.",
+      "metadata": {
+        "filename": "test.txt",
+        "path": "/",
+        "full_path": "/test.txt"
+      }
+    },
+    {
+      "content": "File: /subdir/binary.bin\n\n[Binary file - content not included]",
+      "metadata": {
+        "filename": "binary.bin",
+        "path": "/subdir/",
+        "full_path": "/subdir/binary.bin"
+      }
+    }
+  ]
+}
+EOF
+}
+
 # Function to cleanup test files and directories
 cleanup() {
-    rm -f test.json
-    rm -rf test_output
+    rm -f test.json test_vector.json invalid.json
+    rm -rf test_output test_vector_output
 }
 
 # Test case 1: Basic functionality
@@ -126,6 +152,34 @@ test_invalid_json() {
     rm -f invalid.json
 }
 
+# Test case 7: Vector store format unpacking
+test_vector_store_format() {
+    create_vector_store_json
+    local options="-j test_vector.json -d test_vector_output -s"
+    local expected_output_pattern="Folder structure restored to: test_vector_output"
+    run_test "Vector store format unpacking" "$options" "$expected_output_pattern"
+
+    # Verify the created files
+    if [[ -f "test_vector_output/test.txt" && -f "test_vector_output/subdir/binary.bin" ]]; then
+        echo "Vector store file structure verified."
+    else
+        echo "Vector store file structure verification failed."
+    fi
+
+    # Verify file contents (should extract original content)
+    if [[ "$(cat test_vector_output/test.txt)" == "This is a test file for vector store format." ]]; then
+        echo "Vector store file contents verified."
+    else
+        echo "Vector store file contents verification failed."
+        echo "Expected: 'This is a test file for vector store format.'"
+        echo "Actual: '$(cat test_vector_output/test.txt)'"
+    fi
+
+    # Display the contents of the test_vector_output directory
+    echo "Contents of test_vector_output directory:"
+    ls -R test_vector_output
+}
+
 # Clean up before running tests
 cleanup
 
@@ -136,6 +190,7 @@ test_nonexistent_json
 test_version_info
 test_help_info
 test_invalid_json
+test_vector_store_format
 
 # Clean up after running tests
 cleanup

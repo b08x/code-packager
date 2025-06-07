@@ -8,6 +8,7 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
 
 ### Change Log
 
+- [Jan 07, 2025] Added GUI/TUI file selectors and vector store optimized format
 - [Nov 10, 2024] Added support for including/excluding specific filenames using `-I` and `-E` options
 - [Sep 15, 2024] `code-unpackager` script added
 - [Jun 22, 2024] `max_depth` option added
@@ -18,6 +19,14 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
 - 📦 **Comprehensive Code Packaging and Unpacking:**
   - `code-packager` handles various file types and sizes, allowing you to include or exclude specific extensions or filenames, respect `.gitignore` rules, and optionally zip archive the resulting JSON file for efficient storage and sharing.
   - `code-unpackager` restores the packaged JSON back to its original directory structure, making it easy to manage and modify your codebase.
+- 🎯 **Interactive File Selection:**
+  - TUI mode with `fzf` for command-line interactive directory and file selection
+  - GUI mode with `yad` for graphical file/folder browsing and selection
+  - Streamlines workflow by eliminating the need to remember or type file paths
+- 🚀 **Vector Store Optimized Format:**
+  - Special `-V` flag creates vector store optimized JSON format that embeds filename information directly into file content
+  - Ensures filename context is preserved when content is chunked by vector databases
+  - Backward compatible with existing JSON format
 - ⚙️ **Customizable Output and Restoration:**
    - Control the level of detail and structure of the generated JSON file by including or excluding files of particular extensions, tailoring the output to your specific Language Model (LLM) and use case requirements.
    - Seamlessly restore the directory structure and file contents from the JSON file, ensuring consistency and ease of use.
@@ -49,11 +58,13 @@ That's it! The `code-packager` and `code-unpackager` commands should now be avai
 - `jq`
 - `file`
 - `zip`
+- `fzf` (optional, for TUI file selector)
+- `yad` (optional, for GUI file selector)
 
 On a Debian-based Linux distribution, you can install these dependencies with:
 
 ```bash
-sudo apt-get install git jq file zip
+sudo apt-get install git jq file zip fzf yad
 ```
 
 2. Identify a directory in your system's PATH variable where you want to place the scripts. You can check the directories in your PATH variable by running the following command:
@@ -96,6 +107,8 @@ code-packager -t <directory_path> -o <output_file> [options]
 *   `-g <respect_gitignore>`: Set to `1` to respect `.gitignore`, `0` to ignore (default: `1`).
 *   `-d <include_dot_files>`: Set to `1` to include dot files and folders, `0` to exclude (default: `0`).
 *   `-z <zip_output>`: Set to `1` to zip the output JSON file, `0` to leave uncompressed (default: `0`).
+*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection, `gui` for yad-based graphical selection.
+*   `-V`: Enable vector store optimized format (embeds filename in content for better chunking).
 *   `-m <max_depth>`: Limit the maximum depth of the search (default: unlimited).
 *   `-v, --version`: Display the version of the script and exit.
 *   `-h, --help`: Display this help message and exit.
@@ -188,6 +201,38 @@ code-packager -t ~/myproject -o code.json -i .py -i .js -I README -E TODO.md
 
 This command packages Python and JavaScript files along with the `README` file, but excludes `TODO.md`.
 
+**10. Interactive TUI File Selection:**
+
+```bash
+code-packager -S tui -o code.json
+```
+
+This command opens an interactive fzf-based file browser to select the target directory and output file.
+
+**11. Interactive GUI File Selection:**
+
+```bash
+code-packager -S gui -o code.json
+```
+
+This command opens a graphical yad-based file browser to select the target directory and output file.
+
+**12. Vector Store Optimized Format:**
+
+```bash
+code-packager -t ~/myproject -o code.json -V
+```
+
+This command packages the code using vector store optimized format where filename information is embedded directly in the content for better chunking by vector databases.
+
+**13. Combined Interactive Selection and Vector Format:**
+
+```bash
+code-packager -S tui -V
+```
+
+This command combines interactive TUI selection with vector store optimized format.
+
 ### Example Output
 
 The resulting JSON output may look similar to the following structure:
@@ -223,6 +268,35 @@ The resulting JSON output may look similar to the following structure:
   ]
 }
 ```
+
+#### Vector Store Optimized Format (with `-V` flag)
+
+When using the vector store optimized format, the JSON structure embeds filename information directly in the content:
+
+```json
+{
+  "files": [
+    {
+      "content": "File: /main.py\n\nfrom utils.data_loader import load_data\n\nfile_path = 'data/sample.csv'\ndata = load_data(file_path)\nprint(data.head())\n",
+      "metadata": {
+        "filename": "main.py",
+        "path": "/",
+        "full_path": "/main.py"
+      }
+    },
+    {
+      "content": "File: /utils/data_loader.py\n\nimport pandas as pd\n\ndef load_data(file_path):\n    data = pd.read_csv(file_path)\n    return data\n",
+      "metadata": {
+        "filename": "data_loader.py",
+        "path": "/utils/",
+        "full_path": "/utils/data_loader.py"
+      }
+    }
+  ]
+}
+```
+
+This format ensures that when content is chunked by vector stores, each chunk retains the filename context.
 
 ### File/Directory Structure Example
 

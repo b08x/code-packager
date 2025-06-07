@@ -96,9 +96,33 @@ mkdir -p "$DESTINATION_DIRECTORY"
 
 # Iterate through the files in the JSON file
 jq -c '.files[]' "$JSON_FILE" | while read -r file; do
-    filename=$(echo "$file" | jq -r '.filename')
-    content=$(echo "$file" | jq -r '.content')
-    path=$(echo "$file" | jq -r '.path')
+    # Check if this is the new vector store format (has metadata field)
+    has_metadata=$(echo "$file" | jq -r 'has("metadata")')
+    
+    if [ "$has_metadata" = "true" ]; then
+        # New vector store format
+        filename=$(echo "$file" | jq -r '.metadata.filename')
+        path=$(echo "$file" | jq -r '.metadata.path')
+        content=$(echo "$file" | jq -r '.content')
+        
+        # Extract original content by removing the "File: path" prefix
+        if [ "$content" != "null" ]; then
+            # Remove the first two lines (File: path and empty line)
+            original_content=$(echo "$content" | tail -n +3)
+            
+            # Check if it's a binary file marker
+            if [[ "$content" == *"[Binary file - content not included]"* ]]; then
+                content="null"
+            else
+                content="$original_content"
+            fi
+        fi
+    else
+        # Legacy format
+        filename=$(echo "$file" | jq -r '.filename')
+        content=$(echo "$file" | jq -r '.content')
+        path=$(echo "$file" | jq -r '.path')
+    fi
 
     # Validate each file entry
     if [ -z "$filename" ] || [ -z "$path" ]; then
@@ -111,7 +135,7 @@ jq -c '.files[]' "$JSON_FILE" | while read -r file; do
     mkdir -p "$full_path"
 
     # Write the file content
-    if [ "$content" != "null" ]; then
+    if [ "$content" != "null" ] && [ -n "$content" ]; then
         echo "$content" > "$full_path/$filename"
     else
         # Create an empty file for binary files (content is null)
