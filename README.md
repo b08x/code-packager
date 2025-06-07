@@ -20,8 +20,9 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
   - `code-packager` handles various file types and sizes, allowing you to include or exclude specific extensions or filenames, respect `.gitignore` rules, and optionally zip archive the resulting JSON file for efficient storage and sharing.
   - `code-unpackager` restores the packaged JSON back to its original directory structure, making it easy to manage and modify your codebase.
 - 🎯 **Interactive File Selection:**
-  - TUI mode with `fzf` for command-line interactive directory and file selection
-  - GUI mode with `yad` for graphical file/folder browsing and selection
+  - TUI mode with `fzf` for command-line interactive directory and file selection with multi-select support (TAB to select multiple)
+  - GUI mode with `yad` for graphical file/folder browsing and selection with checklist interface
+  - Cherry-pick specific files and folders instead of using extension-based filtering
   - Streamlines workflow by eliminating the need to remember or type file paths
 - 🚀 **Vector Store Optimized Format:**
   - Special `-V` flag creates vector store optimized JSON format that embeds filename information directly into file content
@@ -58,14 +59,17 @@ That's it! The `code-packager` and `code-unpackager` commands should now be avai
 - `jq`
 - `file`
 - `zip`
+- `fd` (modern find replacement)
 - `fzf` (optional, for TUI file selector)
 - `yad` (optional, for GUI file selector)
 
 On a Debian-based Linux distribution, you can install these dependencies with:
 
 ```bash
-sudo apt-get install git jq file zip fzf yad
+sudo apt-get install git jq file zip fd-find fzf yad
 ```
+
+Note: On some distributions, `fd` may be packaged as `fd-find`.
 
 2. Identify a directory in your system's PATH variable where you want to place the scripts. You can check the directories in your PATH variable by running the following command:
 
@@ -107,7 +111,7 @@ code-packager -t <directory_path> -o <output_file> [options]
 *   `-g <respect_gitignore>`: Set to `1` to respect `.gitignore`, `0` to ignore (default: `1`).
 *   `-d <include_dot_files>`: Set to `1` to include dot files and folders, `0` to exclude (default: `0`).
 *   `-z <zip_output>`: Set to `1` to zip the output JSON file, `0` to leave uncompressed (default: `0`).
-*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection, `gui` for yad-based graphical selection.
+*   `-S <selector_mode>`: Use file/folder selector: `tui` for fzf-based interactive selection with multi-select (TAB to select multiple), `gui` for yad-based graphical selection with checklist.
 *   `-V`: Enable vector store optimized format (embeds filename in content for better chunking).
 *   `-m <max_depth>`: Limit the maximum depth of the search (default: unlimited).
 *   `-v, --version`: Display the version of the script and exit.
@@ -201,21 +205,21 @@ code-packager -t ~/myproject -o code.json -i .py -i .js -I README -E TODO.md
 
 This command packages Python and JavaScript files along with the `README` file, but excludes `TODO.md`.
 
-**10. Interactive TUI File Selection:**
+**10. Interactive TUI File Selection with Multi-Select:**
 
 ```bash
 code-packager -S tui -o code.json
 ```
 
-This command opens an interactive fzf-based file browser to select the target directory and output file.
+This command opens an interactive fzf-based file browser to select the target directory, then allows multi-selecting specific files using TAB. Use ENTER to confirm selection.
 
-**11. Interactive GUI File Selection:**
+**11. Interactive GUI File Selection with Checklist:**
 
 ```bash
 code-packager -S gui -o code.json
 ```
 
-This command opens a graphical yad-based file browser to select the target directory and output file.
+This command opens a graphical yad-based file browser to select the target directory, then shows a checklist interface to select specific files to include.
 
 **12. Vector Store Optimized Format:**
 

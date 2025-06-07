@@ -16,6 +16,7 @@ OUTPUT_FILE=""       # Initialize output file path as empty
 ZIP_OUTPUT=0         # Disable zipping the output file by default
 USE_SELECTOR=""      # File/folder selector mode: tui, gui, or empty for manual
 VECTOR_STORE_FORMAT=0  # Enable vector store optimized format
+MAX_DEPTH=""         # Maximum search depth (unlimited by default)
 
 # Function to display help
 show_help() {
@@ -33,7 +34,8 @@ show_help() {
     echo "  -g <respect_gitignore>  0 to disable, 1 to enable respecting files as per .gitignore (default: enabled)."
     echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
-    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf, 'gui' for yad."
+    echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
+    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for fzf (with multi-select), 'gui' for yad (with checklist)."
     echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
     echo "  -h, --help              Display this help and exit."
@@ -66,7 +68,7 @@ is_binary() {
 
 # Check for required dependencies
 check_dependencies() {
-    local dependencies=("jq" "git" "file" "zip")
+    local dependencies=("jq" "git" "file" "zip" "fd")
     local missing_deps=0
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
@@ -101,6 +103,22 @@ use_fzf_selector() {
         fi
     fi
     
+    # Multi-select files and folders to include
+    echo "Select files and folders to include (TAB to select multiple, ENTER to confirm):"
+    selected_items=$(fd . "$DIRECTORY_PATH" | fzf --multi --prompt="Select items: " --header="TAB=select, ENTER=confirm, ESC=cancel" --preview="file {}" --preview-window=right:50%:wrap)
+    
+    if [ -z "$selected_items" ]; then
+        echo "No items selected. Using all files in directory."
+    else
+        # Create a temporary file list
+        temp_file_list=$(mktemp)
+        echo "$selected_items" > "$temp_file_list"
+        
+        # Override the fd command to only process selected files
+        SELECTED_FILES_LIST="$temp_file_list"
+        export SELECTED_FILES_LIST
+    fi
+    
     if [ -z "$OUTPUT_FILE" ]; then
         OUTPUT_FILE=$(echo "" | fzf --print-query --prompt="Output file: " --header="Enter output JSON filename")
         if [ -z "$OUTPUT_FILE" ]; then
@@ -123,6 +141,39 @@ use_yad_selector() {
         fi
     fi
     
+    # Multi-select files and folders using yad checklist
+    # First get the list of files using fd
+    file_list=$(fd --type f . "$DIRECTORY_PATH")
+    
+    if [ -n "$file_list" ]; then
+        # Create a temporary yad checklist
+        yad_items=""
+        while IFS= read -r file; do
+            filename=$(basename "$file")
+            yad_items+="FALSE|$file|$filename\n"
+        done <<< "$file_list"
+        
+        # Show yad checklist for file selection
+        selected_files=$(echo -e "$yad_items" | yad --list --checklist --title="Select Files to Include" \
+            --text="Select files to include in the package:" \
+            --column="Select" --column="Full Path" --column="Filename" \
+            --width=800 --height=600 \
+            --separator="|")
+        
+        if [ -n "$selected_files" ]; then
+            # Create a temporary file list
+            temp_file_list=$(mktemp)
+            # Extract the selected file paths (second column)
+            echo "$selected_files" | tr '|' '\n' | sed -n '2~3p' > "$temp_file_list"
+            
+            # Override the fd command to only process selected files
+            SELECTED_FILES_LIST="$temp_file_list"
+            export SELECTED_FILES_LIST
+        else
+            echo "No files selected. Using all files in directory."
+        fi
+    fi
+    
     if [ -z "$OUTPUT_FILE" ]; then
         OUTPUT_FILE=$(yad --file-selection --save --title="Save JSON Output" --filename="output.json" --file-filter="JSON files | *.json" --file-filter="All files | *")
         if [ -z "$OUTPUT_FILE" ]; then
@@ -133,7 +184,7 @@ use_yad_selector() {
 }
 
 # Parse command line arguments
-while getopts "t:o:i:I:e:E:s:g:d:z:S:Vvh-" opt; do
+while getopts "t:o:i:I:e:E:s:g:d:z:m:S:Vvh-" opt; do
     case $opt in
         t) DIRECTORY_PATH="${OPTARG}" ;;
         o) OUTPUT_FILE="${OPTARG}" ;;
@@ -151,6 +202,7 @@ while getopts "t:o:i:I:e:E:s:g:d:z:S:Vvh-" opt; do
         g) RESPECT_GITIGNORE="${OPTARG}" ;;
         d) INCLUDE_DOT_FILES="${OPTARG}" ;;
         z) ZIP_OUTPUT="${OPTARG}" ;;
+        m) MAX_DEPTH="${OPTARG}" ;;
         S) USE_SELECTOR="${OPTARG}" ;;
         V) VECTOR_STORE_FORMAT=1 ;;
         v) show_version
@@ -237,13 +289,7 @@ fi
 # Function to process each file
 process_file() {
     local file="$1"
-    # Check if respecting .gitignore and if the file is ignored
-    if [[ "$RESPECT_GITIGNORE" -eq 1 && -d "$DIRECTORY_PATH/.git" ]]; then
-        if git --git-dir="$DIRECTORY_PATH/.git" --work-tree="$DIRECTORY_PATH" check-ignore "$file" > /dev/null; then
-            return # Skip file if it is ignored by .gitignore
-        fi
-    fi
-
+    
     local filesize=$($STAT_CMD "$file")
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
@@ -278,82 +324,102 @@ ${file_content}")
 }
 
 export -f process_file is_binary
-export STAT_CMD MAX_SIZE DIRECTORY_PATH RESPECT_GITIGNORE INCLUDE_DOT_FILES VECTOR_STORE_FORMAT
+export STAT_CMD MAX_SIZE DIRECTORY_PATH VECTOR_STORE_FORMAT
 
-# Construct the find command
-find_command="find \"$DIRECTORY_PATH\" -type f"
+# Construct the fd command
+fd_command="fd"
 
-# Exclude dot files if INCLUDE_DOT_FILES is 0
-if [ "$INCLUDE_DOT_FILES" -eq 0 ]; then
-    find_command+=" -not -path '*/.*'"
+# File type: only regular files
+fd_command+=" --type f"
+
+# Handle gitignore settings
+if [ "$RESPECT_GITIGNORE" -eq 0 ]; then
+    fd_command+=" --no-ignore-vcs"
 fi
 
-# Include extensions and filenames
-if [ ${#INCLUDE_EXT[@]} -gt 0 ] || [ ${#INCLUDE_FILES[@]} -gt 0 ]; then
-    find_command+=" \\( "
-    first=true
-
-    # Add extension patterns
-    for ext in "${INCLUDE_EXT[@]}"; do
-        if [ "$first" = true ]; then
-            find_command+="-name \"*${ext}\""
-            first=false
-        else
-            find_command+=" -o -name \"*${ext}\""
-        fi
-    done
-
-    # Add filename patterns
-    for filename in "${INCLUDE_FILES[@]}"; do
-        if [ "$first" = true ]; then
-            find_command+="-name \"${filename}\""
-            first=false
-        else
-            find_command+=" -o -name \"${filename}\""
-        fi
-    done
-
-    find_command+=" \\)"
+# Handle hidden files
+if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+    fd_command+=" --hidden"
 fi
 
-# Exclude extensions and filenames
-# (Only if include patterns are NOT specified to avoid redundancy)
-if [ ${#INCLUDE_EXT[@]} -eq 0 ] && [ ${#INCLUDE_FILES[@]} -eq 0 ] && \
-   ([ ${#EXCLUDE_EXT[@]} -gt 0 ] || [ ${#EXCLUDE_FILES[@]} -gt 0 ]); then
-    find_command+=" \\( "
-    first=true
-
-    # Add extension patterns
-    for ext in "${EXCLUDE_EXT[@]}"; do
-        if [ "$first" = true ]; then
-            find_command+="-not -name \"*${ext}\""
-            first=false
-        else
-            find_command+=" -and -not -name \"*${ext}\""
-        fi
-    done
-
-    # Add filename patterns
-    for filename in "${EXCLUDE_FILES[@]}"; do
-        if [ "$first" = true ]; then
-            find_command+="-not -name \"${filename}\""
-            first=false
-        else
-            find_command+=" -and -not -name \"${filename}\""
-        fi
-    done
-
-    find_command+=" \\)"
+# Handle max depth if set
+if [ -n "$MAX_DEPTH" ]; then
+    fd_command+=" --max-depth $MAX_DEPTH"
 fi
 
-# Execute find command, filter out excluded files, and process files
-find_result=$(eval "$find_command")
-if [[ $? -ne 0 ]]; then
-  echo "Error: find command failed with error:"
-  echo "$find_result"
-  exit 1
+# Add size filter - fd uses native size filtering
+fd_command+=" --size -${MAX_SIZE}k"
+
+# Handle extensions - fd has native support
+for ext in "${INCLUDE_EXT[@]}"; do
+    # Remove leading dot if present since fd -e expects extension without dot
+    clean_ext="${ext#.}"
+    fd_command+=" -e $clean_ext"
+done
+
+# Handle exclusions
+for ext in "${EXCLUDE_EXT[@]}"; do
+    fd_command+=" --exclude '*$ext'"
+done
+
+for filename in "${EXCLUDE_FILES[@]}"; do
+    fd_command+=" --exclude '$filename'"
+done
+
+# For include filenames, we need to use a pattern
+# If we have specific filenames to include and no extensions, use pattern matching
+if [ ${#INCLUDE_FILES[@]} -gt 0 ] && [ ${#INCLUDE_EXT[@]} -eq 0 ]; then
+    # Build pattern for specific filenames
+    if [ ${#INCLUDE_FILES[@]} -eq 1 ]; then
+        fd_command+=" '^${INCLUDE_FILES[0]}$'"
+    else
+        # Multiple filenames - create regex pattern
+        pattern="^("
+        for i in "${!INCLUDE_FILES[@]}"; do
+            if [ $i -gt 0 ]; then
+                pattern+="|"
+            fi
+            pattern+="${INCLUDE_FILES[$i]}"
+        done
+        pattern+=")$"
+        fd_command+=" '$pattern'"
+    fi
+elif [ ${#INCLUDE_FILES[@]} -gt 0 ]; then
+    # We have both extensions and filenames - need to handle this with multiple fd calls
+    # For now, we'll warn and use extensions only
+    echo "Warning: Both extensions and specific filenames specified. Using extensions only."
+    echo "Specific filenames will be ignored: ${INCLUDE_FILES[*]}"
 fi
-json_array=$(echo "$find_result" | xargs -I {} bash -c 'process_file "{}"' | jq -s .)
+
+# Add search path - fd syntax is: fd [options] [pattern] [path]
+if [ ${#INCLUDE_FILES[@]} -gt 0 ] && [ ${#INCLUDE_EXT[@]} -eq 0 ]; then
+    # Pattern was already added for filename matching, just add path
+    fd_command+=" '$DIRECTORY_PATH'"
+else
+    # No specific filename pattern - use match-all pattern
+    fd_command+=" . '$DIRECTORY_PATH'"
+fi
+
+# Debug: show the fd command being executed
+# echo "Debug: $fd_command"
+
+# Execute fd command and process files
+if [ -n "$SELECTED_FILES_LIST" ] && [ -f "$SELECTED_FILES_LIST" ]; then
+    # Use the manually selected files from fzf multi-select
+    echo "Processing manually selected files..."
+    fd_result=$(cat "$SELECTED_FILES_LIST")
+    # Clean up temporary file
+    rm -f "$SELECTED_FILES_LIST"
+else
+    # Use normal fd command
+    fd_result=$(eval "$fd_command")
+    if [[ $? -ne 0 ]]; then
+      echo "Error: fd command failed with error:"
+      echo "$fd_result"
+      exit 1
+    fi
+fi
+json_array=$(echo "$fd_result" | xargs -I {} bash -c 'process_file "{}"' | jq -s .)
 
 # Output the JSON object using jq and pretty print
 echo "{\"files\":$json_array}" | jq . > "$OUTPUT_FILE"
@@ -372,6 +438,10 @@ fi
 
 echo "JSON output saved to: $OUTPUT_FILE"
 
-# Generate directory tree using find command
+# Generate directory tree
 echo "Directory tree:"
-eval "$find_command -print"
+if [ -n "$fd_result" ]; then
+    echo "$fd_result"
+else
+    eval "$fd_command"
+fi

@@ -23,10 +23,11 @@ The scripts require these system tools:
 - `git` (for .gitignore support)
 - `file` (binary file detection)
 - `zip` (optional compression)
+- `fd` (modern find replacement)
 - `fzf` (optional, for TUI file selector)
 - `yad` (optional, for GUI file selector)
 
-Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fzf yad`
+Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fd-find fzf yad`
 
 ### Usage Examples
 ```bash
@@ -39,10 +40,10 @@ Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fzf yad`
 # Vector store optimized format (embeds filename in content)
 ./code-packager -t ~/myproject -o output.json -V
 
-# Use TUI selector (fzf) for interactive file/folder selection
+# Use TUI selector (fzf) for interactive file/folder selection with multi-select
 ./code-packager -S tui -o output.json
 
-# Use GUI selector (yad) for interactive file/folder selection
+# Use GUI selector (yad) for interactive file/folder selection with checklist
 ./code-packager -S gui -o output.json
 
 # Unpack with confirmation
@@ -55,12 +56,13 @@ Install on Debian/Ubuntu: `sudo apt-get install git jq file zip fzf yad`
 ## Architecture
 
 ### code-packager Script
-- **File Processing**: Uses `find` command with dynamic filtering based on inclusion/exclusion patterns
+- **File Processing**: Uses `fd` command (modern find replacement) with native filtering for extensions, size, and gitignore
 - **Binary Detection**: Leverages the `file` command to identify binary files and excludes their content
-- **Git Integration**: Optionally respects `.gitignore` rules via `git check-ignore`
+- **Git Integration**: Native gitignore support via `fd --no-ignore-vcs` flag
 - **JSON Output**: Uses `jq` for structured JSON generation with file metadata (filename, content, path)
 - **Vector Store Format**: New `-V` flag creates content-embedded format for better vector store chunking
-- **Interactive Selectors**: TUI mode (`-S tui`) uses `fzf` for directory/file selection; GUI mode (`-S gui`) uses `yad`
+- **Interactive Selectors**: TUI mode (`-S tui`) uses `fzf` with multi-select (TAB) for cherry-picking files; GUI mode (`-S gui`) uses `yad` checklist interface
+- **Advanced Filtering**: Native support for file extensions (`-e`), size limits (`--size`), and hidden files (`--hidden`)
 - **Parallel Processing**: Exports functions and uses `xargs` with `bash -c` for efficient file processing
 
 ### code-unpackager Script
