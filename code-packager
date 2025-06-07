@@ -176,8 +176,15 @@ use_gum_selector() {
 
     # Step 3: Select file types to exclude
     gum style --foreground 212 "Step 3: Select file types to exclude (optional)"
-    # Get all files and extract extensions, including files without extensions
-    available_extensions=$(fd --type f . "$DIRECTORY_PATH" | while read -r file; do
+    # Get ALL files in the project to detect all possible extensions
+    # This runs before any directory exclusions to show complete extension list
+    fd_all_files_cmd="fd --type f"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_all_files_cmd+=" --hidden"
+    fi
+    fd_all_files_cmd+=" . '$DIRECTORY_PATH'"
+    
+    available_extensions=$(eval "$fd_all_files_cmd" | while read -r file; do
         # Get just the filename without path
         filename=$(basename "$file")
         if [[ "$filename" == *.* ]]; then
@@ -185,7 +192,7 @@ use_gum_selector() {
         else
             echo "(no extension)"
         fi
-    done | sort | uniq | head -20)
+    done | sort | uniq | head -30)
 
     if [ -n "$available_extensions" ]; then
         selected_exclude_exts=$(echo "$available_extensions" | gum choose --no-limit --header "Select file extensions to exclude (Space to select, Enter to confirm):")
@@ -500,7 +507,9 @@ fi
 
 # Handle specific directory exclusions (subdirectories)
 for dir in "${EXCLUDE_DIRS[@]}"; do
-    fd_command+=" --exclude '$dir/*'"
+    # Remove trailing slash and add proper wildcard
+    clean_dir="${dir%/}"
+    fd_command+=" --exclude '$clean_dir/*'"
 done
 
 # Handle file extension exclusions
@@ -560,9 +569,13 @@ else
 fi
 
 # Debug: show the fd command being executed
-# echo "Debug: $fd_command"
-# echo "INCLUDE_DIRS: ${INCLUDE_DIRS[@]}"
-# echo "EXCLUDE_DIRS: ${EXCLUDE_DIRS[@]}"
+echo "Debug: $fd_command"
+echo "INCLUDE_DIRS: ${INCLUDE_DIRS[@]}"
+echo "EXCLUDE_DIRS: ${EXCLUDE_DIRS[@]}"
+echo "Raw EXCLUDE_DIRS contents:"
+for i in "${!EXCLUDE_DIRS[@]}"; do
+    echo "  [$i]: '${EXCLUDE_DIRS[$i]}'"
+done
 
 # Execute fd command and process files
 if [ -n "$SELECTED_FILES_LIST" ] && [ -f "$SELECTED_FILES_LIST" ]; then
