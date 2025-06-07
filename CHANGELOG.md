@@ -1,6 +1,6 @@
 ### Change Log
 
-- [Jan 07, 2025] Added GUI/TUI file selectors and vector store optimized format
+- [Jun 07, 2025] Added GUI/TUI file selectors and vector store optimized format
   - Added `-S tui` option for fzf-based interactive file/folder selection
   - Added `-S gui` option for yad-based graphical file/folder selection
   - Added `-V` option for vector store optimized JSON format (embeds filename in content)

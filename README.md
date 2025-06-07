@@ -8,7 +8,7 @@ This project provides two bash scripts, `code-packager` and `code-unpackager`, t
 
 ### Change Log
 
-- [Jan 07, 2025] Added GUI/TUI file selectors and vector store optimized format
+- [Jun 07, 2025] Added GUI/TUI file selectors and vector store optimized format
 - [Nov 10, 2024] Added support for including/excluding specific filenames using `-I` and `-E` options
 - [Sep 15, 2024] `code-unpackager` script added
 - [Jun 22, 2024] `max_depth` option added
