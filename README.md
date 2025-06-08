@@ -6,6 +6,8 @@ Effortlessly package and unpack your codebase into and from a single JSON file, 
 
 This project provides two bash scripts, `code-packager` and `code-unpackager`, that simplify the process of preparing your code for interaction with LLMs. By converting your code into a structured format and restoring it back, you unlock the potential for advanced analysis, code generation, and insightful interactions with AI.
 
+[![asciicast](https://asciinema.org/a/722443.svg)](https://asciinema.org/a/722443)
+
 ### Change Log
 
 - [Jun 07, 2025] Enhanced TUI selector with step-by-step workflow and improved directory/file filtering
