@@ -1,0 +1,800 @@
+#!/bin/bash
+
+# Version information
+VERSION="0.4.0-chunked"
+
+# Default values
+INCLUDE_EXT=()        # Array to store include extensions
+EXCLUDE_EXT=()        # Array to store exclude extensions
+INCLUDE_FILES=()      # Array to store include filenames
+EXCLUDE_FILES=()      # Array to store exclude filenames
+EXCLUDE_DIRS=()       # Array to store exclude directories
+INCLUDE_DIRS=()       # Array to store include directories
+EXCLUDE_NO_EXT=0      # Flag to exclude files without extensions
+MAX_SIZE=10240        # 10MB in KB
+RESPECT_GITIGNORE=1   # Enable respecting files as per .gitignore by default
+INCLUDE_DOT_FILES=0   # Exclude dot files and folders by default
+DIRECTORY_PATH=""     # Initialize directory path as empty
+OUTPUT_FILE=""        # Initialize output file path as empty
+ZIP_OUTPUT=0          # Disable zipping the output file by default
+USE_SELECTOR=""       # File/folder selector mode: tui, gui, or empty for manual
+VECTOR_STORE_FORMAT=0 # Enable vector store optimized format
+MAX_DEPTH=""          # Maximum search depth (unlimited by default)
+PROJECT_NAME=""       # Project name for full_path construction
+PARENT_MAX_CHARS=2000 # Maximum characters for parent chunks
+CHILD_MAX_CHARS=600   # Maximum characters for child chunks
+MAX_OUTPUT_SIZE=14     # Maximum output file size in MB
+
+# Function to display help
+show_help() {
+    echo "Usage: $0 -t <directory_path> -o <output_file> [options]"
+    echo ""
+    echo "Options:"
+    echo ""
+    echo "  -t <directory_path>     Target directory to process."
+    echo "  -o <output_file>        Output file path (.csv extension will be added if not present)."
+    echo "  -i <include_extension>  Include files with the specified extension (with or without the leading dot)."
+    echo "  -I <include_filename>   Include files with the specified filename."
+    echo "  -e <exclude_extension>  Exclude files with the specified extension (with or without the leading dot)."
+    echo "  -E <exclude_filename>   Exclude files with the specified filename."
+    echo "  -s <max_size_in_kb>     Include files up to the specified size in kilobytes."
+    echo "  -g <respect_gitignore>  0 to disable, 1 to enable respecting files as per .gitignore (default: enabled)."
+    echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
+    echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
+    echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
+    echo "  -n <project_name>       Project name for full_path construction (prompts if not provided with -V)."
+    echo "  -S <selector_mode>      Use file/folder selector: 'tui' for gum (interactive workflow), 'gui' for yad (with multi-select)."
+    echo "  -V                      Enable vector store optimized format (embeds filename in content)."
+    echo "  -P <parent_max_chars>   Maximum characters for parent chunks (default: 2000)."
+    echo "  -C <child_max_chars>    Maximum characters for child chunks (default: 600)."
+    echo "  -M <max_output_mb>      Maximum output file size in MB (default: 14)."
+    echo "  -v, --version           Display version information and exit."
+    echo "  -h, --help              Display this help and exit."
+    echo ""
+    echo "Example:"
+    echo ""
+    echo "  $0 -t ~/project -o output.csv -i .py -i .js -P 4000 -C 800"
+    echo ""
+    echo "  This command will create parent-child chunks optimized for dify.ai document processing."
+    echo ""
+    echo "Output Format: parent_id,parent_content,child_id,child_content,filename,path,full_path,is_binary"
+}
+
+# Function to display version
+show_version() {
+    echo "Code Packager Chunked for dify.ai - Version $VERSION"
+}
+
+# Function to check if a file is binary
+is_binary() {
+    local file="$1"
+    if [[ $(file --mime "$file" | grep -o 'charset=binary') ]]; then
+        return 0 # It's a binary file
+    else
+        return 1 # It's not a binary file
+    fi
+}
+
+# Function to escape CSV content
+csv_escape() {
+    local content="$1"
+    # Replace double quotes with double double quotes and wrap in quotes if contains special chars
+    if [[ "$content" == *\"* ]] || [[ "$content" == *,* ]] || [[ "$content" == *$'\n'* ]] || [[ "$content" == *$'\r'* ]]; then
+        # Replace each double quote with two double quotes, then wrap the whole thing in quotes
+        content="${content//\"/\"\"}"
+        echo "\"$content\""
+    else
+        echo "$content"
+    fi
+}
+
+# Function to detect code boundaries for chunking
+detect_code_boundaries() {
+    local content="$1"
+    local filename="$2"
+    local boundaries=()
+    
+    # Language-specific patterns for functions/classes
+    case "${filename##*.}" in
+        py|python)
+            # Python: class and def statements
+            boundaries+=($(echo "$content" | grep -n "^class \|^def \|^async def " | cut -d: -f1))
+            ;;
+        js|ts|jsx|tsx)
+            # JavaScript/TypeScript: function, class, const/let function assignments
+            boundaries+=($(echo "$content" | grep -n "^function \|^class \|^const.*=.*function\|^let.*=.*function\|^const.*=.*=>\|^let.*=.*=>" | cut -d: -f1))
+            ;;
+        java|kt)
+            # Java/Kotlin: class, interface, method declarations
+            boundaries+=($(echo "$content" | grep -n "^.*class \|^.*interface \|^.*public \|^.*private \|^.*protected " | cut -d: -f1))
+            ;;
+        cpp|cc|cxx|c|h|hpp)
+            # C/C++: function definitions, class declarations
+            boundaries+=($(echo "$content" | grep -n "^.*{$\|^class \|^struct \|^namespace " | cut -d: -f1))
+            ;;
+        rb|ruby)
+            # Ruby: class, def, module
+            boundaries+=($(echo "$content" | grep -n "^class \|^def \|^module " | cut -d: -f1))
+            ;;
+        go)
+            # Go: func, type, var, const declarations
+            boundaries+=($(echo "$content" | grep -n "^func \|^type \|^var \|^const " | cut -d: -f1))
+            ;;
+        php)
+            # PHP: class, function declarations
+            boundaries+=($(echo "$content" | grep -n "^.*class \|^.*function \|^.*public function\|^.*private function\|^.*protected function" | cut -d: -f1))
+            ;;
+        *)
+            # Generic: look for common patterns
+            boundaries+=($(echo "$content" | grep -n "^.*{$\|^.*function\|^.*def \|^.*class " | cut -d: -f1))
+            ;;
+    esac
+    
+    # Add paragraph boundaries (double newlines)
+    boundaries+=($(echo "$content" | grep -n "^$" | cut -d: -f1))
+    
+    # Sort and remove duplicates
+    printf '%s\n' "${boundaries[@]}" | sort -n | uniq
+}
+
+# Function to check output file size
+check_output_size() {
+    if [ -f "$OUTPUT_FILE" ]; then
+        local size_mb=$(du -m "$OUTPUT_FILE" | cut -f1)
+        if [ "$size_mb" -ge "$MAX_OUTPUT_SIZE" ]; then
+            echo "Warning: Output file size ($size_mb MB) approaching limit ($MAX_OUTPUT_SIZE MB)"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Function to create parent-child chunks with optimized format
+create_chunks() {
+    local content="$1"
+    local filename="$2"
+    local file_path="$3"
+    local full_path="$4"
+    local is_binary="$5"
+    
+    # Check size limit before processing
+    if ! check_output_size; then
+        echo "Skipping $filename - size limit reached"
+        return
+    fi
+    
+    if [ "$is_binary" = "true" ]; then
+        # For binary files, create single parent chunk
+        local parent_id="${filename}_p1"
+        local child_id="${filename}_c1"
+        local escaped_content=$(csv_escape "[Binary file]")
+        echo "$parent_id,$escaped_content,$child_id,$escaped_content,$(csv_escape "$filename"),$(csv_escape "$file_path"),$is_binary"
+        return
+    fi
+    
+    local boundaries=($(detect_code_boundaries "$content" "$filename"))
+    local total_lines=$(echo "$content" | wc -l)
+    local parent_count=1
+    local child_count=1
+    
+    # If no boundaries found or file is small, treat as single chunk
+    if [ ${#boundaries[@]} -eq 0 ] || [ ${#content} -le $PARENT_MAX_CHARS ]; then
+        local parent_id="${filename}_p1"
+        local child_id="${filename}_c1"
+        
+        # Split content if it exceeds child max chars
+        if [ ${#content} -le $CHILD_MAX_CHARS ]; then
+            local escaped_content=$(csv_escape "$content")
+            echo "$parent_id,$escaped_content,$child_id,$escaped_content,$(csv_escape "$filename"),$(csv_escape "$file_path"),$is_binary"
+        else
+            # Split into smaller child chunks  
+            local escaped_parent=$(csv_escape "$content")
+            local start_pos=0
+            while [ $start_pos -lt ${#content} ]; do
+                # Check size limit during processing
+                if ! check_output_size; then
+                    echo "Size limit reached, stopping chunk creation"
+                    return
+                fi
+                
+                local chunk="${content:$start_pos:$CHILD_MAX_CHARS}"
+                # Try to break at word boundary
+                if [ $((start_pos + CHILD_MAX_CHARS)) -lt ${#content} ]; then
+                    local last_newline=$(echo "$chunk" | grep -n $'\n' | tail -1 | cut -d: -f1)
+                    if [ -n "$last_newline" ] && [ $last_newline -gt $((CHILD_MAX_CHARS / 2)) ]; then
+                        chunk=$(echo "$chunk" | head -n $last_newline)
+                        start_pos=$((start_pos + ${#chunk}))
+                    else
+                        start_pos=$((start_pos + CHILD_MAX_CHARS))
+                    fi
+                else
+                    start_pos=${#content}
+                fi
+                
+                local child_id="${filename}_c${child_count}"
+                local escaped_child=$(csv_escape "$chunk")
+                echo "$parent_id,$escaped_parent,$child_id,$escaped_child,$(csv_escape "$filename"),$(csv_escape "$file_path"),$is_binary"
+                child_count=$((child_count + 1))
+            done
+        fi
+        return
+    fi
+    
+    # Process content in sections based on boundaries
+    local prev_line=1
+    local current_parent=""
+    local current_parent_lines=0
+    
+    for boundary in "${boundaries[@]}" $((total_lines + 1)); do
+        local section_lines=$((boundary - prev_line))
+        local section=$(echo "$content" | sed -n "${prev_line},${boundary}p")
+        
+        # Start new parent chunk if current would exceed limit
+        if [ ${#current_parent} -gt 0 ] && [ $((${#current_parent} + ${#section})) -gt $PARENT_MAX_CHARS ]; then
+            # Check size limit before creating chunks
+            if ! check_output_size; then
+                echo "Size limit reached, stopping processing"
+                return
+            fi
+            
+            # Output current parent with its child chunks
+            local parent_id="${filename}_p${parent_count}"
+            local escaped_parent=$(csv_escape "$current_parent")
+            
+            # Split parent into child chunks
+            local start_pos=0
+            local local_child_count=1
+            while [ $start_pos -lt ${#current_parent} ]; do
+                local chunk="${current_parent:$start_pos:$CHILD_MAX_CHARS}"
+                # Try to break at logical boundary
+                if [ $((start_pos + CHILD_MAX_CHARS)) -lt ${#current_parent} ]; then
+                    local last_newline=$(echo "$chunk" | grep -n $'\n' | tail -1 | cut -d: -f1)
+                    if [ -n "$last_newline" ] && [ $last_newline -gt $((CHILD_MAX_CHARS / 2)) ]; then
+                        chunk=$(echo "$chunk" | head -n $last_newline)
+                        start_pos=$((start_pos + ${#chunk}))
+                    else
+                        start_pos=$((start_pos + CHILD_MAX_CHARS))
+                    fi
+                else
+                    start_pos=${#current_parent}
+                fi
+                
+                local child_id="${filename}_c${child_count}"
+                local escaped_child=$(csv_escape "$chunk")
+                echo "$parent_id,$escaped_parent,$child_id,$escaped_child,$(csv_escape "$filename"),$(csv_escape "$file_path"),$is_binary"
+                child_count=$((child_count + 1))
+                local_child_count=$((local_child_count + 1))
+            done
+            
+            parent_count=$((parent_count + 1))
+            current_parent=""
+        fi
+        
+        # Add section to current parent
+        current_parent="${current_parent}${section}"
+        prev_line=$boundary
+    done
+    
+    # Output final parent chunk if any content remains
+    if [ ${#current_parent} -gt 0 ]; then
+        local parent_id="${filename}_p${parent_count}"
+        local escaped_parent=$(csv_escape "$current_parent")
+        
+        # Split into child chunks
+        local start_pos=0
+        local local_child_count=1
+        while [ $start_pos -lt ${#current_parent} ]; do
+            local chunk="${current_parent:$start_pos:$CHILD_MAX_CHARS}"
+            if [ $((start_pos + CHILD_MAX_CHARS)) -lt ${#current_parent} ]; then
+                local last_newline=$(echo "$chunk" | grep -n $'\n' | tail -1 | cut -d: -f1)
+                if [ -n "$last_newline" ] && [ $last_newline -gt $((CHILD_MAX_CHARS / 2)) ]; then
+                    chunk=$(echo "$chunk" | head -n $last_newline)
+                    start_pos=$((start_pos + ${#chunk}))
+                else
+                    start_pos=$((start_pos + CHILD_MAX_CHARS))
+                fi
+            else
+                start_pos=${#current_parent}
+            fi
+            
+            local child_id="${filename}_c${child_count}"
+            local escaped_child=$(csv_escape "$chunk")
+            echo "$parent_id,$escaped_parent,$child_id,$escaped_child,$(csv_escape "$filename"),$(csv_escape "$file_path"),$is_binary"
+            child_count=$((child_count + 1))
+            local_child_count=$((local_child_count + 1))
+        done
+    fi
+}
+
+# Check for required dependencies
+check_dependencies() {
+    local dependencies=("git" "file" "zip" "fd" "gum")
+    local missing_deps=0
+    for dep in "${dependencies[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            echo "Error: Required dependency '$dep' is not installed."
+            missing_deps=1
+        fi
+    done
+
+    # Check optional dependencies based on selector mode
+    if [ "$USE_SELECTOR" = "tui" ] && ! command -v "gum" &>/dev/null; then
+        echo "Error: 'gum' is required for TUI selector mode."
+        missing_deps=1
+    fi
+    if [ "$USE_SELECTOR" = "gui" ] && ! command -v "yad" &>/dev/null; then
+        echo "Error: 'yad' is required for GUI selector mode."
+        missing_deps=1
+    fi
+
+    if [ "$missing_deps" -ne 0 ]; then
+        echo "Please install the missing dependencies and try again."
+        exit 1
+    fi
+}
+
+# Function to use gum for interactive selection workflow
+use_gum_selector() {
+    # Step 1: Select base directory
+    if [ -z "$DIRECTORY_PATH" ]; then
+        gum style --foreground 212 --border-foreground 212 --border double --align center --width 50 --margin "1 2" --padding "2 4" "Code Packager Chunked Setup"
+
+        DIRECTORY_PATH=$(gum input --placeholder "Enter directory path (or '.' for current)" --header "Step 1: Select base directory to package")
+        if [ -z "$DIRECTORY_PATH" ]; then
+            DIRECTORY_PATH="."
+        fi
+
+        # Validate directory exists
+        if [[ ! -d "$DIRECTORY_PATH" ]]; then
+            gum style --foreground 196 "Error: Directory '$DIRECTORY_PATH' does not exist."
+            exit 1
+        fi
+
+        gum style --foreground 46 "Selected directory: $DIRECTORY_PATH"
+    fi
+
+    # Step 2: Select top-level directories to include (depth 1)
+    gum style --foreground 212 "Step 2: Select top-level directories to include (optional)"
+    
+    # Include hidden directories if dot files are enabled
+    fd_dir_cmd="fd --type d --max-depth 1"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_dir_cmd+=" --hidden"
+    fi
+    fd_dir_cmd+=" . '$DIRECTORY_PATH'"
+    
+    top_level_dirs=$(eval "$fd_dir_cmd" | sed "s|^$DIRECTORY_PATH/||" | sed 's|/$||' | grep -v '^$' | sort)
+
+    if [ -n "$top_level_dirs" ]; then
+        selected_include_dirs=$(echo "$top_level_dirs" | gum choose --no-limit --header "Select top-level directories to include (Space to select, Enter to skip for all):")
+
+        if [ -n "$selected_include_dirs" ]; then
+            while IFS= read -r dir; do
+                INCLUDE_DIRS+=("$dir")
+            done <<<"$selected_include_dirs"
+            gum style --foreground 46 "Including directories: $(printf '%s, ' "${INCLUDE_DIRS[@]}" | sed 's/, $//')"
+
+            # Step 2b: Select subdirectories to exclude from included directories
+            gum style --foreground 212 "Step 2b: Select subdirectories to exclude (optional)"
+            subdirs_to_exclude=""
+            for included_dir in "${INCLUDE_DIRS[@]}"; do
+                subdirs=$(fd --type d . "$DIRECTORY_PATH/$included_dir" | sed "s|^$DIRECTORY_PATH/||" | grep -v "^$included_dir$" | sort)
+                if [ -n "$subdirs" ]; then
+                    subdirs_to_exclude+="$subdirs"$'\n'
+                fi
+            done
+
+            if [ -n "$subdirs_to_exclude" ]; then
+                selected_exclude_subdirs=$(echo "$subdirs_to_exclude" | sort | uniq | gum choose --no-limit --header "Select subdirectories to exclude (Space to select, Enter to confirm):")
+
+                if [ -n "$selected_exclude_subdirs" ]; then
+                    while IFS= read -r dir; do
+                        EXCLUDE_DIRS+=("$dir")
+                    done <<<"$selected_exclude_subdirs"
+                    gum style --foreground 220 "Excluded subdirectories: $(printf '%s, ' "${EXCLUDE_DIRS[@]}" | sed 's/, $//')"
+                else
+                    gum style --foreground 46 "No subdirectories excluded"
+                fi
+            else
+                gum style --foreground 46 "No subdirectories found in selected directories"
+            fi
+        else
+            gum style --foreground 46 "No directories selected - including all"
+        fi
+    else
+        gum style --foreground 46 "No top-level directories found"
+    fi
+
+    # Step 3: Select file types to exclude
+    gum style --foreground 212 "Step 3: Select file types to exclude (optional)"
+    # Get ALL files in the project to detect all possible extensions
+    # This runs before any directory exclusions to show complete extension list
+    fd_all_files_cmd="fd --type f"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_all_files_cmd+=" --hidden"
+    fi
+    fd_all_files_cmd+=" . '$DIRECTORY_PATH'"
+    
+    available_extensions=$(eval "$fd_all_files_cmd" | while read -r file; do
+        # Get just the filename without path
+        filename=$(basename "$file")
+        if [[ "$filename" == *.* ]]; then
+            echo "${filename##*.}"
+        else
+            echo "(no extension)"
+        fi
+    done | sort | uniq | head -30)
+
+    if [ -n "$available_extensions" ]; then
+        selected_exclude_exts=$(echo "$available_extensions" | gum choose --no-limit --header "Select file extensions to exclude (Space to select, Enter to confirm):")
+
+        if [ -n "$selected_exclude_exts" ]; then
+            while IFS= read -r ext; do
+                if [ "$ext" = "(no extension)" ]; then
+                    # Special handling for files without extensions - we'll handle this differently
+                    EXCLUDE_NO_EXT=1
+                else
+                    EXCLUDE_EXT+=(".$ext")
+                fi
+            done <<<"$selected_exclude_exts"
+            gum style --foreground 220 "Excluded extensions: $(printf '%s, ' "${EXCLUDE_EXT[@]}" | sed 's/, $//')"
+        else
+            gum style --foreground 46 "No file types excluded"
+        fi
+    else
+        gum style --foreground 46 "No file extensions found"
+    fi
+
+    # Step 4: Configure chunking parameters
+    gum style --foreground 212 "Step 4: Configure chunking parameters"
+    
+    PARENT_MAX_CHARS=$(gum input --placeholder "$PARENT_MAX_CHARS" --header "Parent chunk max characters" --value "$PARENT_MAX_CHARS")
+    CHILD_MAX_CHARS=$(gum input --placeholder "$CHILD_MAX_CHARS" --header "Child chunk max characters" --value "$CHILD_MAX_CHARS")
+    MAX_OUTPUT_SIZE=$(gum input --placeholder "$MAX_OUTPUT_SIZE" --header "Max output file size (MB)" --value "$MAX_OUTPUT_SIZE")
+    
+    gum style --foreground 46 "Parent chunks: max $PARENT_MAX_CHARS chars"
+    gum style --foreground 46 "Child chunks: max $CHILD_MAX_CHARS chars"
+    gum style --foreground 46 "Max output size: $MAX_OUTPUT_SIZE MB"
+
+    # Step 5: Set output file
+    if [ -z "$OUTPUT_FILE" ]; then
+        default_output="$(basename "$DIRECTORY_PATH")_chunked.csv"
+        OUTPUT_FILE=$(gum input --placeholder "$default_output" --header "Step 5: Enter output filename" --value "$default_output")
+        if [ -z "$OUTPUT_FILE" ]; then
+            OUTPUT_FILE="$default_output"
+        fi
+        # Add .csv extension if not present
+        if [[ "$OUTPUT_FILE" != *.csv ]]; then
+            OUTPUT_FILE="${OUTPUT_FILE}.csv"
+        fi
+        gum style --foreground 46 "Output file: $OUTPUT_FILE"
+    fi
+
+    # Summary
+    gum style --foreground 212 --border-foreground 212 --border rounded --align left --width 60 --margin "1 2" --padding "1 2" \
+        "Summary:" \
+        "Base directory: $DIRECTORY_PATH" \
+        "Included directories: ${#INCLUDE_DIRS[@]} selected" \
+        "Excluded subdirectories: ${#EXCLUDE_DIRS[@]} selected" \
+        "Excluded extensions: ${#EXCLUDE_EXT[@]} selected" \
+        "Parent chunk size: $PARENT_MAX_CHARS chars" \
+        "Child chunk size: $CHILD_MAX_CHARS chars" \
+        "Max output size: $MAX_OUTPUT_SIZE MB" \
+        "Output file: $OUTPUT_FILE"
+}
+
+# Parse command line arguments
+while getopts "t:o:i:I:e:E:s:g:d:z:m:n:S:VP:C:M:vh-" opt; do
+    case $opt in
+    t) DIRECTORY_PATH="${OPTARG}" ;;
+    o) OUTPUT_FILE="${OPTARG}" ;;
+    i) INCLUDE_EXT+=("${OPTARG}") ;;
+    I) INCLUDE_FILES+=("${OPTARG}") ;;
+    e) EXCLUDE_EXT+=("${OPTARG}") ;;
+    E) EXCLUDE_FILES+=("${OPTARG}") ;;
+    s)
+        MAX_SIZE="${OPTARG}"
+        if ! [[ "$MAX_SIZE" =~ ^[0-9]+$ ]]; then
+            echo "Error: Invalid value for -s option. Please provide a positive integer."
+            exit 1
+        fi
+        ;;
+    g) RESPECT_GITIGNORE="${OPTARG}" ;;
+    d) INCLUDE_DOT_FILES="${OPTARG}" ;;
+    z) ZIP_OUTPUT="${OPTARG}" ;;
+    m) MAX_DEPTH="${OPTARG}" ;;
+    n) PROJECT_NAME="${OPTARG}" ;;
+    S) USE_SELECTOR="${OPTARG}" ;;
+    V) VECTOR_STORE_FORMAT=1 ;;
+    P) PARENT_MAX_CHARS="${OPTARG}" ;;
+    C) CHILD_MAX_CHARS="${OPTARG}" ;;
+    M) MAX_OUTPUT_SIZE="${OPTARG}" ;;
+    v)
+        show_version
+        exit 0
+        ;;
+    h)
+        show_help
+        exit 0
+        ;;
+    -) case "${OPTARG}" in
+        version)
+            show_version
+            exit 0
+            ;;
+        help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Invalid option -${OPTARG}. Use -h or --help for usage information." >&2
+            exit 1
+            ;;
+        esac ;;
+    esac
+done
+
+# Use file/folder selectors if specified
+case "$USE_SELECTOR" in
+"tui")
+    use_gum_selector
+    ;;
+"")
+    # No selector, continue with normal validation
+    ;;
+*)
+    echo "Error: Invalid selector mode '$USE_SELECTOR'. Use 'tui' for gum."
+    exit 1
+    ;;
+esac
+
+# Ensure required parameters are provided
+if [ -z "$DIRECTORY_PATH" ]; then
+    echo "Directory path is required."
+    show_help
+    exit 1
+fi
+
+# Check if directory exists
+if [[ ! -d "$DIRECTORY_PATH" ]]; then
+    echo "Error: Directory '$DIRECTORY_PATH' does not exist."
+    exit 1
+fi
+
+# Determine the output file name if a directory is specified
+if [ -d "$OUTPUT_FILE" ]; then
+    base_dir=$(basename "$(realpath "$DIRECTORY_PATH")")
+    OUTPUT_FILE="$OUTPUT_FILE/${base_dir}_chunked.csv"
+fi
+
+# Add .csv extension if not present
+if [[ "$OUTPUT_FILE" != *.csv ]]; then
+    OUTPUT_FILE="${OUTPUT_FILE}.csv"
+fi
+
+# Validate output file path
+output_dir=$(dirname "$OUTPUT_FILE")
+if [[ ! -d "$output_dir" || ! -w "$output_dir" ]]; then
+    echo "Error: Cannot write to output directory '$output_dir'."
+    exit 1
+fi
+
+# Check dependencies before proceeding
+check_dependencies
+
+# Prompt for project name if using vector store format and none provided
+if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -z "$PROJECT_NAME" ]; then
+    default_name=$(basename "$(realpath "$DIRECTORY_PATH")")
+    PROJECT_NAME=$(gum input --placeholder="Enter project name" --value="$default_name" --header="Project name for full_path construction:")
+    if [ -z "$PROJECT_NAME" ]; then
+        PROJECT_NAME="$default_name"
+    fi
+    echo "Using project name: $PROJECT_NAME"
+fi
+
+# Normalize the include and exclude extensions to ensure they start with a dot
+for i in "${!INCLUDE_EXT[@]}"; do
+    if [[ "${INCLUDE_EXT[$i]}" != "" && "${INCLUDE_EXT[$i]:0:1}" != "." ]]; then
+        INCLUDE_EXT[$i]=".${INCLUDE_EXT[$i]}"
+    fi
+done
+
+for i in "${!EXCLUDE_EXT[@]}"; do
+    if [[ "${EXCLUDE_EXT[$i]}" != "" && "${EXCLUDE_EXT[$i]:0:1}" != "." ]]; then
+        EXCLUDE_EXT[$i]=".${EXCLUDE_EXT[$i]}"
+    fi
+done
+
+# Determine OS and set the appropriate stat command
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    STAT_CMD="stat -f%z"
+else
+    STAT_CMD="stat -c%s"
+fi
+
+# Function to process each file for chunked CSV output
+process_file_chunked() {
+    local file="$1"
+
+    local filesize=$($STAT_CMD "$file")
+    if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
+        local filename=$(basename "$file")
+        local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
+        # Construct full_path with project name prefix for vector store format
+        if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
+            local rel_path=$(realpath --relative-to="$DIRECTORY_PATH" "$file")
+            local full_path="$PROJECT_NAME/$rel_path"
+        else
+            local full_path=$(realpath "$file")
+        fi
+
+        local is_binary="false"
+        local content=""
+
+        if is_binary "$file"; then
+            is_binary="true"
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                content="File: ${full_path}
+
+[Binary file - content not included]"
+            else
+                content="[Binary file - content not included]"
+            fi
+        else
+            local file_content=$(cat "$file")
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                content="File: ${full_path}
+
+${file_content}"
+            else
+                content="$file_content"
+            fi
+        fi
+
+        # Create parent-child chunks
+        create_chunks "$content" "$filename" "$dirpath/" "$full_path" "$is_binary"
+    fi
+}
+
+export -f process_file_chunked is_binary csv_escape create_chunks detect_code_boundaries check_output_size
+export STAT_CMD MAX_SIZE DIRECTORY_PATH VECTOR_STORE_FORMAT PROJECT_NAME PARENT_MAX_CHARS CHILD_MAX_CHARS MAX_OUTPUT_SIZE OUTPUT_FILE
+
+# Construct the fd command (simplified for chunked version)
+fd_command="fd --type f"
+
+# Handle gitignore settings
+if [ "$RESPECT_GITIGNORE" -eq 0 ]; then
+    fd_command+=" --no-ignore-vcs"
+fi
+
+# Handle hidden files
+if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+    fd_command+=" --hidden"
+fi
+
+# Handle max depth if set
+if [ -n "$MAX_DEPTH" ]; then
+    fd_command+=" --max-depth $MAX_DEPTH"
+fi
+
+# Add size filter
+fd_command+=" --size -${MAX_SIZE}k"
+
+# Handle directory inclusions/exclusions FIRST (highest priority)
+if [ ${#INCLUDE_DIRS[@]} -gt 0 ]; then
+    # If specific directories were selected to include, exclude all other TOP-LEVEL DIRECTORIES only
+    # This should NOT exclude root-level files
+    # Use the same hidden directory detection as in the selector
+    fd_all_dirs_cmd="fd --type d --max-depth 1"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        fd_all_dirs_cmd+=" --hidden"
+    fi
+    fd_all_dirs_cmd+=" . '$DIRECTORY_PATH'"
+    
+    all_top_level_dirs=$(eval "$fd_all_dirs_cmd" | sed "s|^$DIRECTORY_PATH/||" | sed 's|/$||' | grep -v '^$')
+    if [ -n "$all_top_level_dirs" ]; then
+        while IFS= read -r dir; do
+            if ! printf '%s\n' "${INCLUDE_DIRS[@]}" | grep -q "^$dir$"; then
+                # Exclude the entire directory and its contents
+                fd_command+=" --exclude '$dir'"
+            fi
+        done <<<"$all_top_level_dirs"
+    fi
+fi
+
+# Handle specific directory exclusions (subdirectories)
+for dir in "${EXCLUDE_DIRS[@]}"; do
+    # Remove trailing slash and add proper wildcard
+    clean_dir="${dir%/}"
+    fd_command+=" --exclude '$clean_dir/*'"
+done
+
+# Handle file extension exclusions
+for ext in "${EXCLUDE_EXT[@]}"; do
+    fd_command+=" --exclude '*$ext'"
+done
+
+# Handle extensions - fd has native support (applied after exclusions)
+for ext in "${INCLUDE_EXT[@]}"; do
+    # Remove leading dot if present since fd -e expects extension without dot
+    clean_ext="${ext#.}"
+    fd_command+=" -e $clean_ext"
+done
+
+for filename in "${EXCLUDE_FILES[@]}"; do
+    fd_command+=" --exclude '$filename'"
+done
+
+# Handle exclusion of files without extensions
+if [ "$EXCLUDE_NO_EXT" -eq 1 ]; then
+    # This is complex with fd - we'll handle it in post-processing instead
+    EXCLUDE_NO_EXT_POST=1
+fi
+
+# For include filenames, we need to use a pattern
+# If we have specific filenames to include and no extensions, use pattern matching
+if [ ${#INCLUDE_FILES[@]} -gt 0 ] && [ ${#INCLUDE_EXT[@]} -eq 0 ]; then
+    # Build pattern for specific filenames
+    if [ ${#INCLUDE_FILES[@]} -eq 1 ]; then
+        fd_command+=" '^${INCLUDE_FILES[0]}$'"
+    else
+        # Multiple filenames - create regex pattern
+        pattern="^("
+        for i in "${!INCLUDE_FILES[@]}"; do
+            if [ $i -gt 0 ]; then
+                pattern+="|"
+            fi
+            pattern+="${INCLUDE_FILES[$i]}"
+        done
+        pattern+=")$"
+        fd_command+=" '$pattern'"
+    fi
+elif [ ${#INCLUDE_FILES[@]} -gt 0 ]; then
+    # We have both extensions and filenames - need to handle this with multiple fd calls
+    # For now, we'll warn and use extensions only
+    echo "Warning: Both extensions and specific filenames specified. Using extensions only."
+    echo "Specific filenames will be ignored: ${INCLUDE_FILES[*]}"
+fi
+
+# Add search path - fd syntax is: fd [options] [pattern] [path]
+if [ ${#INCLUDE_FILES[@]} -gt 0 ] && [ ${#INCLUDE_EXT[@]} -eq 0 ]; then
+    # Pattern was already added for filename matching, just add path
+    fd_command+=" '$DIRECTORY_PATH'"
+else
+    # No specific filename pattern - use match-all pattern
+    fd_command+=" . '$DIRECTORY_PATH'"
+fi
+
+# Write CSV header (optimized format)
+echo "parent_id,parent_content,child_id,child_content,filename,path,is_binary" > "$OUTPUT_FILE"
+
+# Execute fd command and process files
+echo "Creating parent-child chunks..."
+fd_result=$(eval "$fd_command")
+if [[ $? -ne 0 ]]; then
+    echo "Error: fd command failed"
+    exit 1
+fi
+
+# Process files and append to CSV
+echo "$fd_result" | xargs -I {} bash -c 'process_file_chunked "{}"' >> "$OUTPUT_FILE"
+
+# Zip the output file if requested
+if [ "$ZIP_OUTPUT" -eq 1 ]; then
+    zip_file="${OUTPUT_FILE%.*}.zip"
+    zip -jq "$zip_file" "$OUTPUT_FILE"
+    if [[ $? -ne 0 ]]; then
+        echo "Error: Failed to zip the output file."
+        exit 1
+    fi
+    echo "Output file zipped: $zip_file"
+fi
+
+echo "Chunked CSV output saved to: $OUTPUT_FILE"
+echo "Parent chunk max: $PARENT_MAX_CHARS characters"
+echo "Child chunk max: $CHILD_MAX_CHARS characters"
+
+# Show chunk statistics
+total_chunks=$(tail -n +2 "$OUTPUT_FILE" | wc -l)
+unique_parents=$(tail -n +2 "$OUTPUT_FILE" | cut -d, -f1 | sort | uniq | wc -l)
+echo "Generated $total_chunks child chunks from $unique_parents parent chunks"
