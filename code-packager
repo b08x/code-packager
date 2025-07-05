@@ -61,6 +61,107 @@ show_version() {
     echo "Code Packager for Language Models - Version $VERSION"
 }
 
+# Function to save configuration to hidden config file
+save_config() {
+    local config_file="$1/.code-packager-config"
+    local config_data
+    
+    # Build JSON configuration
+    config_data=$(jq -n \
+        --arg directory_path "$DIRECTORY_PATH" \
+        --arg output_file "$OUTPUT_FILE" \
+        --argjson include_ext "$(if [ ${#INCLUDE_EXT[@]} -gt 0 ]; then printf '%s\n' "${INCLUDE_EXT[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson exclude_ext "$(if [ ${#EXCLUDE_EXT[@]} -gt 0 ]; then printf '%s\n' "${EXCLUDE_EXT[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson include_files "$(if [ ${#INCLUDE_FILES[@]} -gt 0 ]; then printf '%s\n' "${INCLUDE_FILES[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson exclude_files "$(if [ ${#EXCLUDE_FILES[@]} -gt 0 ]; then printf '%s\n' "${EXCLUDE_FILES[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson exclude_dirs "$(if [ ${#EXCLUDE_DIRS[@]} -gt 0 ]; then printf '%s\n' "${EXCLUDE_DIRS[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson include_dirs "$(if [ ${#INCLUDE_DIRS[@]} -gt 0 ]; then printf '%s\n' "${INCLUDE_DIRS[@]}" | jq -R . | jq -s .; else echo '[]'; fi)" \
+        --argjson exclude_no_ext "$EXCLUDE_NO_EXT" \
+        --argjson max_size "$MAX_SIZE" \
+        --argjson respect_gitignore "$RESPECT_GITIGNORE" \
+        --argjson include_dot_files "$INCLUDE_DOT_FILES" \
+        --argjson zip_output "$ZIP_OUTPUT" \
+        --arg max_depth "$MAX_DEPTH" \
+        --arg project_name "$PROJECT_NAME" \
+        --argjson vector_store_format "$VECTOR_STORE_FORMAT" \
+        '{
+            directory_path: $directory_path,
+            output_file: $output_file,
+            include_ext: $include_ext,
+            exclude_ext: $exclude_ext,
+            include_files: $include_files,
+            exclude_files: $exclude_files,
+            exclude_dirs: $exclude_dirs,
+            include_dirs: $include_dirs,
+            exclude_no_ext: $exclude_no_ext,
+            max_size: $max_size,
+            respect_gitignore: $respect_gitignore,
+            include_dot_files: $include_dot_files,
+            zip_output: $zip_output,
+            max_depth: $max_depth,
+            project_name: $project_name,
+            vector_store_format: $vector_store_format
+        }')
+    
+    echo "$config_data" > "$config_file"
+    echo "Configuration saved to $config_file"
+}
+
+# Function to load configuration from hidden config file
+load_config() {
+    local config_file="$1/.code-packager-config"
+    
+    if [[ -f "$config_file" ]]; then
+        echo "Loading configuration from $config_file"
+        
+        # Read configuration values
+        DIRECTORY_PATH=$(jq -r '.directory_path // empty' "$config_file")
+        OUTPUT_FILE=$(jq -r '.output_file // empty' "$config_file")
+        
+        # Load arrays - only if they have content
+        INCLUDE_EXT=()
+        EXCLUDE_EXT=()
+        INCLUDE_FILES=()
+        EXCLUDE_FILES=()
+        EXCLUDE_DIRS=()
+        INCLUDE_DIRS=()
+        
+        # Load arrays if they exist and have content
+        if [[ $(jq -r '.include_ext | length' "$config_file") -gt 0 ]]; then
+            readarray -t INCLUDE_EXT < <(jq -r '.include_ext[]' "$config_file")
+        fi
+        if [[ $(jq -r '.exclude_ext | length' "$config_file") -gt 0 ]]; then
+            readarray -t EXCLUDE_EXT < <(jq -r '.exclude_ext[]' "$config_file")
+        fi
+        if [[ $(jq -r '.include_files | length' "$config_file") -gt 0 ]]; then
+            readarray -t INCLUDE_FILES < <(jq -r '.include_files[]' "$config_file")
+        fi
+        if [[ $(jq -r '.exclude_files | length' "$config_file") -gt 0 ]]; then
+            readarray -t EXCLUDE_FILES < <(jq -r '.exclude_files[]' "$config_file")
+        fi
+        if [[ $(jq -r '.exclude_dirs | length' "$config_file") -gt 0 ]]; then
+            readarray -t EXCLUDE_DIRS < <(jq -r '.exclude_dirs[]' "$config_file")
+        fi
+        if [[ $(jq -r '.include_dirs | length' "$config_file") -gt 0 ]]; then
+            readarray -t INCLUDE_DIRS < <(jq -r '.include_dirs[]' "$config_file")
+        fi
+        
+        # Load scalar values
+        EXCLUDE_NO_EXT=$(jq -r '.exclude_no_ext // 0' "$config_file")
+        MAX_SIZE=$(jq -r '.max_size // 10240' "$config_file")
+        RESPECT_GITIGNORE=$(jq -r '.respect_gitignore // 1' "$config_file")
+        INCLUDE_DOT_FILES=$(jq -r '.include_dot_files // 0' "$config_file")
+        ZIP_OUTPUT=$(jq -r '.zip_output // 0' "$config_file")
+        MAX_DEPTH=$(jq -r '.max_depth // empty' "$config_file")
+        PROJECT_NAME=$(jq -r '.project_name // empty' "$config_file")
+        VECTOR_STORE_FORMAT=$(jq -r '.vector_store_format // 0' "$config_file")
+        
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Function to check if a file is binary
 is_binary() {
     local file="$1"
@@ -306,6 +407,9 @@ use_gum_selector() {
         "Excluded extensions: ${#EXCLUDE_EXT[@]} selected" \
         "Excluded files: ${#EXCLUDE_FILES[@]} selected" \
         "Output file: $OUTPUT_FILE"
+    
+    # Save configuration
+    save_config "$DIRECTORY_PATH"
 }
 
 # Function to use yad for GUI file/folder selection
@@ -354,6 +458,17 @@ use_yad_selector() {
         fi
     fi
 }
+
+# Check if no arguments provided, then try to load config or use TUI
+if [ $# -eq 0 ]; then
+    # Check if there's a config file in current directory
+    if load_config "."; then
+        echo "Using saved configuration from current directory"
+    else
+        echo "No configuration found, starting TUI workflow"
+        USE_SELECTOR="tui"
+    fi
+fi
 
 # Parse command line arguments
 while getopts "t:o:i:I:e:E:s:g:d:z:m:n:S:Vvh-" opt; do
