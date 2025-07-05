@@ -328,10 +328,88 @@ use_gum_selector() {
         gum style --foreground 46 "No file extensions found"
     fi
 
-    # Step 4: Set output file
+    # Step 4: Exclude individual files
+    gum style --foreground 212 "Step 4: Exclude individual files (optional)"
+    
+    # Build fd command for preview
+    preview_fd_cmd="fd --type f"
+    if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+        preview_fd_cmd+=" --hidden"
+    fi
+    if [ "$RESPECT_GITIGNORE" -eq 0 ]; then
+        preview_fd_cmd+=" --no-ignore-vcs"
+    fi
+    preview_fd_cmd+=" --size -${MAX_SIZE}k"
+    if [ -n "$MAX_DEPTH" ]; then
+        preview_fd_cmd+=" --max-depth=$MAX_DEPTH"
+    fi
+    
+    # Apply directory filters
+    if [ ${#INCLUDE_DIRS[@]} -gt 0 ]; then
+        fd_all_dirs_cmd="fd --type d --max-depth 1"
+        if [ "$INCLUDE_DOT_FILES" -eq 1 ]; then
+            fd_all_dirs_cmd+=" --hidden"
+        fi
+        fd_all_dirs_cmd+=" . '$DIRECTORY_PATH'"
+        
+        all_top_level_dirs=$(eval "$fd_all_dirs_cmd" | sed "s|^$DIRECTORY_PATH/||" | sed 's|/$||' | grep -v '^$')
+        
+        if [ -n "$all_top_level_dirs" ]; then
+            while IFS= read -r dir; do
+                if ! printf '%s\n' "${INCLUDE_DIRS[@]}" | grep -q "^$dir$"; then
+                    preview_fd_cmd+=" --exclude '$dir'"
+                fi
+            done <<<"$all_top_level_dirs"
+        fi
+    fi
+    
+    # Apply subdirectory exclusions
+    for dir in "${EXCLUDE_DIRS[@]}"; do
+        clean_dir="${dir%/}"
+        preview_fd_cmd+=" --exclude '$clean_dir/*'"
+    done
+    
+    # Apply extension exclusions
+    for ext in "${EXCLUDE_EXT[@]}"; do
+        preview_fd_cmd+=" --exclude '*$ext'"
+    done
+    
+    # Apply extension inclusions
+    for ext in "${INCLUDE_EXT[@]}"; do
+        clean_ext="${ext#.}"
+        preview_fd_cmd+=" -e $clean_ext"
+    done
+    
+    preview_fd_cmd+=" . '$DIRECTORY_PATH'"
+    
+    # Get the list of files that would be included
+    available_files=$(eval "$preview_fd_cmd" | sed "s|^$DIRECTORY_PATH/||" | sort)
+    
+    if [ -n "$available_files" ]; then
+        selected_exclude_files=$(echo "$available_files" | gum choose --no-limit --header "Select individual files to exclude (Space to select, Enter to confirm):")
+        
+        if [ -n "$selected_exclude_files" ]; then
+            while IFS= read -r file; do
+                filename=$(basename "$file")
+                EXCLUDE_FILES+=("$filename")
+            done <<<"$selected_exclude_files"
+            gum style --foreground 220 "Excluded files: $(printf '%s, ' "${EXCLUDE_FILES[@]}" | sed 's/, $//')"
+        else
+            gum style --foreground 46 "No individual files excluded"
+        fi
+    else
+        gum style --foreground 46 "No files available for exclusion based on current selections"
+    fi
+
+    # Step 5: Set output file
     if [ -z "$OUTPUT_FILE" ]; then
-        default_output="$(basename "$DIRECTORY_PATH").csv"
-        OUTPUT_FILE=$(gum input --placeholder "$default_output" --header "Step 4: Enter output filename" --value "$default_output")
+        # Handle current directory case
+        if [ "$DIRECTORY_PATH" = "." ] || [ -z "$DIRECTORY_PATH" ]; then
+            default_output="$(basename "$(pwd)").csv"
+        else
+            default_output="$(basename "$DIRECTORY_PATH").csv"
+        fi
+        OUTPUT_FILE=$(gum input --placeholder "$default_output" --header "Step 5: Enter output filename" --value "$default_output")
         if [ -z "$OUTPUT_FILE" ]; then
             OUTPUT_FILE="$default_output"
         fi
@@ -349,6 +427,7 @@ use_gum_selector() {
         "Included directories: ${#INCLUDE_DIRS[@]} selected" \
         "Excluded subdirectories: ${#EXCLUDE_DIRS[@]} selected" \
         "Excluded extensions: ${#EXCLUDE_EXT[@]} selected" \
+        "Excluded files: ${#EXCLUDE_FILES[@]} selected" \
         "Output file: $OUTPUT_FILE"
     
     # Save configuration

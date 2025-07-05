@@ -386,7 +386,12 @@ use_gum_selector() {
 
     # Step 5: Set output file
     if [ -z "$OUTPUT_FILE" ]; then
-        default_output="$(basename "$DIRECTORY_PATH").json"
+        # Handle current directory case
+        if [ "$DIRECTORY_PATH" = "." ]; then
+            default_output="$(basename "$(pwd)").json"
+        else
+            default_output="$(basename "$DIRECTORY_PATH").json"
+        fi
         OUTPUT_FILE=$(gum input --placeholder "$default_output" --header "Step 5: Enter output filename" --value "$default_output")
         if [ -z "$OUTPUT_FILE" ]; then
             OUTPUT_FILE="$default_output"
