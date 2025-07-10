@@ -609,17 +609,15 @@ process_file() {
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
-        # Construct full_path with project name prefix for vector store format
+        # For vector store format, construct the file path with project name prefix
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
             local rel_path=$(realpath --relative-to="$DIRECTORY_PATH" "$file")
-            local full_path="$PROJECT_NAME/$rel_path"
-        else
-            local full_path=$(realpath "$file")
+            local vector_path="$PROJECT_NAME/$rel_path"
         fi
 
         if is_binary "$file"; then
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                local content=$(jq -Rs . <<<"File: ${full_path}
+                local content=$(jq -Rs . <<<"File: ${vector_path}
 
 [Binary file - content not included]")
             else
@@ -628,7 +626,7 @@ process_file() {
         else
             local file_content=$(cat "$file")
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                local content=$(jq -Rs . <<<"File: ${full_path}
+                local content=$(jq -Rs . <<<"File: ${vector_path}
 
 ${file_content}")
             else
@@ -637,7 +635,7 @@ ${file_content}")
         fi
 
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-            echo "{\"content\":$content, \"metadata\":{\"filename\":\"$filename\", \"path\":\"$dirpath/\", \"full_path\":\"$full_path\"}}"
+            echo "{\"content\":$content, \"metadata\":{\"filename\":\"$filename\", \"path\":\"$dirpath/\"}}"
         else
             echo "{\"filename\":\"$filename\", \"content\":$content, \"path\":\"$dirpath/\"}"
         fi

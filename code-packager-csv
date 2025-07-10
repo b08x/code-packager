@@ -20,7 +20,7 @@ ZIP_OUTPUT=0          # Disable zipping the output file by default
 USE_SELECTOR=""       # File/folder selector mode: tui, gui, or empty for manual
 VECTOR_STORE_FORMAT=0 # Enable vector store optimized format
 MAX_DEPTH=""          # Maximum search depth (unlimited by default)
-PROJECT_NAME=""       # Project name for full_path construction
+PROJECT_NAME=""       # Project name for vector store format
 
 # Function to display help
 show_help() {
@@ -39,7 +39,7 @@ show_help() {
     echo "  -d <include_dot_files>  0 to exclude, 1 to include dot files and folders (default: excluded)."
     echo "  -z <zip_output>         0 to disable, 1 to enable zipping the output file (default: disabled)."
     echo "  -m <max_depth>          Limit the maximum depth of the search (default: unlimited)."
-    echo "  -n <project_name>       Project name for full_path construction (prompts if not provided with -V)."
+    echo "  -n <project_name>       Project name for vector store format (prompts if not provided with -V)."
     echo "  -S <selector_mode>      Use file/folder selector: 'tui' for gum (interactive workflow), 'gui' for yad (with multi-select)."
     echo "  -V                      Enable vector store optimized format (embeds filename in content)."
     echo "  -v, --version           Display version information and exit."
@@ -596,7 +596,7 @@ check_dependencies
 if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -z "$PROJECT_NAME" ]; then
     # Default to directory name if no project name provided
     default_name=$(basename "$(realpath "$DIRECTORY_PATH")")
-    PROJECT_NAME=$(gum input --placeholder="Enter project name" --value="$default_name" --header="Project name for full_path construction:")
+    PROJECT_NAME=$(gum input --placeholder="Enter project name" --value="$default_name" --header="Project name for vector store format:")
     if [ -z "$PROJECT_NAME" ]; then
         PROJECT_NAME="$default_name"
     fi
@@ -631,12 +631,10 @@ process_file_csv() {
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
-        # Construct full_path with project name prefix for vector store format
+        # For vector store format, construct the file path with project name prefix
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
             local rel_path=$(realpath --relative-to="$DIRECTORY_PATH" "$file")
-            local full_path="$PROJECT_NAME/$rel_path"
-        else
-            local full_path=$(realpath "$file")
+            local vector_path="$PROJECT_NAME/$rel_path"
         fi
 
         local is_binary="false"
@@ -645,7 +643,7 @@ process_file_csv() {
         if is_binary "$file"; then
             is_binary="true"
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                content="File: ${full_path}
+                content="File: ${vector_path}
 
 [Binary file - content not included]"
             else
@@ -654,7 +652,7 @@ process_file_csv() {
         else
             local file_content=$(cat "$file")
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
-                content="File: ${full_path}
+                content="File: ${vector_path}
 
 ${file_content}"
             else
@@ -665,11 +663,10 @@ ${file_content}"
         # Escape CSV content
         local escaped_filename=$(csv_escape "$filename")
         local escaped_path=$(csv_escape "$dirpath/")
-        local escaped_full_path=$(csv_escape "$full_path")
         local escaped_content=$(csv_escape "$content")
 
         # Output CSV row
-        echo "$escaped_filename,$escaped_path,$escaped_full_path,$escaped_content,$is_binary"
+        echo "$escaped_filename,$escaped_path,$escaped_content,$is_binary"
     fi
 }
 
@@ -786,7 +783,7 @@ else
 fi
 
 # Write CSV header
-echo "filename,path,full_path,content,is_binary" > "$OUTPUT_FILE"
+echo "filename,path,content,is_binary" > "$OUTPUT_FILE"
 
 # Execute fd command and process files
 if [ -n "$SELECTED_FILES_LIST" ] && [ -f "$SELECTED_FILES_LIST" ]; then

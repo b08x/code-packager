@@ -1,0 +1,18 @@
+{
+  "directory_path": ".",
+  "output_file": "code-packager.json",
+  "include_ext": [],
+  "exclude_ext": [],
+  "include_files": [],
+  "exclude_files": [],
+  "exclude_dirs": [],
+  "include_dirs": [],
+  "exclude_no_ext": 0,
+  "max_size": 10240,
+  "respect_gitignore": 1,
+  "include_dot_files": 0,
+  "zip_output": 0,
+  "max_depth": "",
+  "project_name": "",
+  "vector_store_format": 0
+}

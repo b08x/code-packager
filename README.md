@@ -11,6 +11,7 @@ This enhanced toolkit builds upon **[Yoichiro Hasebe's](https://github.com/yohas
 - **`code-unpackager`**: Restores directory structure from JSON files (original by Yoichiro Hasebe)
 - **`code-packager-csv`**: CSV format variant for spreadsheet compatibility
 - **`code-packager-chunked`**: Advanced chunking tool optimized for dify.ai and vector databases
+- **`code-packager-batch`**: Batch processor for handling multiple projects recursively
 
 By converting your code into structured formats and restoring it back, you unlock the potential for advanced analysis, code generation, and insightful interactions with AI.
 
@@ -55,7 +56,7 @@ This enhanced version builds upon that solid foundation with additional output f
 
 ## 🛠️ Available Tools
 
-This toolkit includes four powerful utilities designed for different use cases:
+This toolkit includes five powerful utilities designed for different use cases:
 
 ### 📦 `code-packager`
 
@@ -93,6 +94,19 @@ Advanced chunking tool optimized for AI platforms and vector databases:
 - **CSV output format**: `parent_id,parent_content,child_id,child_content,filename,path,is_binary`
 - **Automatic size limits** to prevent oversized outputs
 - **Intelligent splitting** at logical code boundaries (functions, classes, etc.)
+
+### 🚀 `code-packager-batch`
+
+Batch processor for handling multiple projects at scale:
+
+- **Recursive project discovery** with intelligent project detection
+- **Support for all packager types** (JSON, CSV, chunked)
+- **Configurable project indicators** (package.json, .git, requirements.txt, etc.)
+- **Interactive and saved configuration modes** 
+- **Comprehensive reporting** with processing statistics and metadata
+- **Batch processing output structure**: organized by project with individual metadata files
+- **Skip existing outputs** to resume interrupted batch operations
+- **Verbose logging** and progress tracking
 
 ## ✨ Features
 
@@ -257,6 +271,61 @@ The chunked variant creates parent-child chunk structures optimized for AI platf
 - `-v, --version`: Display version information
 - `-h, --help`: Display help message
 
+### Code Packager Batch
+
+```bash
+code-packager-batch -s <source_directory> -o <output_directory> [options]
+```
+
+Batch process multiple projects with automatic project discovery:
+
+**Required Options:**
+- `-s <source_directory>`: Root directory containing project directories
+- `-o <output_directory>`: Directory where packaged outputs will be saved
+
+**Optional Arguments:**
+- `-t <packager_type>`: Type of packager: 'json', 'csv', or 'chunked' (default: json)
+- `-d <max_depth>`: Maximum depth to search for projects (default: 3)
+- `-m <min_files>`: Minimum files to consider directory a project (default: 5)
+- `-i <interactive>`: Use interactive TUI menu: 0=no, 1=yes (default: 1)
+- `-c <use_config>`: Try saved configs first: 0=no, 1=yes (default: 1)
+- `-k <skip_existing>`: Skip existing outputs: 0=no, 1=yes (default: 1)
+- `-p <include_pattern>`: Pattern that indicates project directory (can be used multiple times)
+- `-x <exclude_pattern>`: Pattern to exclude from search (can be used multiple times)
+- `-v, --verbose`: Enable verbose output
+- `-h, --help`: Display help message
+
+**Project Detection:**
+A directory is considered a project if it contains:
+- At least the minimum number of files (default: 5), AND
+- One or more project indicator files/patterns
+
+**Default Project Indicators:**
+- `.git` (Git repository)
+- `package.json` (Node.js)
+- `requirements.txt` (Python)
+- `Cargo.toml` (Rust)
+- `pom.xml` (Java/Maven)
+- `composer.json` (PHP)
+- `Gemfile` (Ruby)
+- `go.mod` (Go)
+- `Makefile` (Make)
+- `CMakeLists.txt` (CMake)
+- `setup.py` (Python)
+- `*.sln`, `*.vcxproj` (Visual Studio)
+
+**Output Structure:**
+```
+<output_directory>/
+├── project1/
+│   ├── project1.json (or .csv)
+│   └── metadata.json
+├── project2/
+│   ├── project2.json
+│   └── metadata.json
+└── batch_report.json
+```
+
 ## 📚 Examples
 
 **1. Including Multiple File Types:**
@@ -392,6 +461,38 @@ code-packager-chunked -S tui
 ```
 
 This command opens an interactive workflow for chunked packaging, allowing you to configure chunk sizes and filtering options step-by-step.
+
+**17. Batch Process Multiple Projects:**
+
+```bash
+code-packager-batch -s ~/workspace -o ~/packaged-projects
+```
+
+This command recursively discovers and processes all projects in `~/workspace`, creating JSON packages for each project in `~/packaged-projects`.
+
+**18. Batch Processing with CSV Format:**
+
+```bash
+code-packager-batch -s ~/repositories -o ~/outputs -t csv -i 0
+```
+
+This command processes all projects using CSV format without interactive prompts for each project.
+
+**19. Advanced Batch Processing:**
+
+```bash
+code-packager-batch -s ~/code -o ~/results -t chunked -d 5 -p 'setup.cfg' -x 'node_modules' -v
+```
+
+This command searches up to 5 levels deep, includes custom project indicator `setup.cfg`, excludes `node_modules` directories, uses chunked format, and provides verbose output.
+
+**20. Resume Interrupted Batch Processing:**
+
+```bash
+code-packager-batch -s ~/workspace -o ~/packaged-projects -k 1
+```
+
+This command skips projects that already have output files, allowing you to resume an interrupted batch operation.
 
 ### Example Output
 

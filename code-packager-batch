@@ -1,0 +1,593 @@
+#!/bin/bash
+
+# Version information
+VERSION="0.1.0"
+
+# Default values
+SOURCE_DIRECTORY=""
+OUTPUT_DIRECTORY=""
+PACKAGER_TYPE="json"        # json, csv, or chunked
+MAX_DEPTH=3                 # Maximum depth to search for projects
+MIN_FILES=5                 # Minimum files to consider a directory a project
+USE_INTERACTIVE=1           # Use TUI menu for each project
+USE_SAVED_CONFIG=1          # Try to use saved configs first
+SKIP_EXISTING=1             # Skip projects that already have output files
+PARALLEL_JOBS=1             # Number of parallel jobs (future feature)
+INCLUDE_PATTERNS=()         # File patterns that indicate a project directory
+EXCLUDE_PATTERNS=()         # Directory patterns to exclude from search
+VERBOSE=0                   # Verbose output
+
+# Common project indicators
+DEFAULT_PROJECT_INDICATORS=(
+    ".git"
+    "package.json"
+    "requirements.txt"
+    "Cargo.toml"
+    "pom.xml"
+    "composer.json"
+    "Gemfile"
+    "go.mod"
+    "Makefile"
+    "CMakeLists.txt"
+    "setup.py"
+    "*.sln"
+    "*.vcxproj"
+)
+
+# Function to display help
+show_help() {
+    echo "Usage: $0 -s <source_directory> -o <output_directory> [options]"
+    echo ""
+    echo "Batch process multiple projects with code-packager tools."
+    echo ""
+    echo "Required Options:"
+    echo "  -s <source_directory>   Root directory containing project directories"
+    echo "  -o <output_directory>   Directory where packaged outputs will be saved"
+    echo ""
+    echo "Optional Arguments:"
+    echo "  -t <packager_type>      Type of packager: 'json', 'csv', or 'chunked' (default: json)"
+    echo "  -d <max_depth>          Maximum depth to search for projects (default: 3)"
+    echo "  -m <min_files>          Minimum files to consider directory a project (default: 5)"
+    echo "  -i <interactive>        Use interactive TUI menu: 0=no, 1=yes (default: 1)"
+    echo "  -c <use_config>         Try saved configs first: 0=no, 1=yes (default: 1)"
+    echo "  -k <skip_existing>      Skip existing outputs: 0=no, 1=yes (default: 1)"
+    echo "  -p <include_pattern>    Pattern that indicates project directory (can be used multiple times)"
+    echo "  -x <exclude_pattern>    Pattern to exclude from search (can be used multiple times)"
+    echo "  -j <parallel_jobs>      Number of parallel jobs (default: 1, future feature)"
+    echo "  -v, --verbose           Enable verbose output"
+    echo "  --version               Display version information and exit"
+    echo "  -h, --help              Display this help and exit"
+    echo ""
+    echo "Examples:"
+    echo ""
+    echo "  # Process all projects in ~/workspace using JSON packager"
+    echo "  $0 -s ~/workspace -o ~/packaged-projects"
+    echo ""
+    echo "  # Use CSV packager with interactive mode disabled"
+    echo "  $0 -s ~/workspace -o ~/outputs -t csv -i 0"
+    echo ""
+    echo "  # Search deeper with custom project indicators"
+    echo "  $0 -s ~/repos -o ~/outputs -d 5 -p 'setup.cfg' -p '.dockerignore'"
+    echo ""
+    echo "  # Exclude certain directories from search"
+    echo "  $0 -s ~/code -o ~/outputs -x 'node_modules' -x '.git' -x 'build'"
+    echo ""
+    echo "Project Detection:"
+    echo "  A directory is considered a project if it contains:"
+    echo "  - At least $MIN_FILES files, AND"
+    echo "  - One or more project indicator files/patterns"
+    echo ""
+    echo "Default Project Indicators:"
+    for indicator in "${DEFAULT_PROJECT_INDICATORS[@]}"; do
+        echo "  - $indicator"
+    done
+    echo ""
+    echo "Output Structure:"
+    echo "  <output_directory>/"
+    echo "  ├── project1/"
+    echo "  │   ├── project1.json (or .csv)"
+    echo "  │   └── metadata.json"
+    echo "  ├── project2/"
+    echo "  │   ├── project2.json"
+    echo "  │   └── metadata.json"
+    echo "  └── batch_report.json"
+}
+
+# Function to display version
+show_version() {
+    echo "Code Packager Batch Processor - Version $VERSION"
+}
+
+# Function to check for required dependencies
+check_dependencies() {
+    local dependencies=("git" "file" "fd" "jq")
+    local missing_deps=0
+    
+    for dep in "${dependencies[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            echo "Error: Required dependency '$dep' is not installed."
+            missing_deps=1
+        fi
+    done
+    
+    # Check if code-packager scripts exist
+    local packagers=("./code-packager" "./code-packager-csv" "./code-packager-chunked")
+    for packager in "${packagers[@]}"; do
+        if [[ ! -f "$packager" || ! -x "$packager" ]]; then
+            echo "Error: Required script '$packager' not found or not executable."
+            missing_deps=1
+        fi
+    done
+    
+    if [ "$missing_deps" -ne 0 ]; then
+        echo "Please install the missing dependencies and ensure all code-packager scripts are present."
+        exit 1
+    fi
+}
+
+# Function to log messages
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    case "$level" in
+        "INFO")
+            echo "[$timestamp] INFO: $message"
+            ;;
+        "WARN")
+            echo "[$timestamp] WARN: $message" >&2
+            ;;
+        "ERROR")
+            echo "[$timestamp] ERROR: $message" >&2
+            ;;
+        "DEBUG")
+            if [ "$VERBOSE" -eq 1 ]; then
+                echo "[$timestamp] DEBUG: $message"
+            fi
+            ;;
+    esac
+}
+
+# Function to check if directory is a project
+is_project_directory() {
+    local dir="$1"
+    local file_count=0
+    local has_indicator=0
+    
+    # Count files (not directories)
+    file_count=$(find "$dir" -maxdepth 2 -type f 2>/dev/null | wc -l)
+    
+    if [ "$file_count" -lt "$MIN_FILES" ]; then
+        log_message "DEBUG" "Directory $dir has only $file_count files (minimum: $MIN_FILES)"
+        return 1
+    fi
+    
+    # Combine default indicators with user-provided patterns
+    local all_indicators=("${DEFAULT_PROJECT_INDICATORS[@]}" "${INCLUDE_PATTERNS[@]}")
+    
+    # Check for project indicators
+    for indicator in "${all_indicators[@]}"; do
+        if [[ -e "$dir/$indicator" ]] || [[ $(find "$dir" -maxdepth 1 -name "$indicator" 2>/dev/null) ]]; then
+            has_indicator=1
+            log_message "DEBUG" "Found project indicator: $indicator in $dir"
+            break
+        fi
+    done
+    
+    if [ "$has_indicator" -eq 1 ]; then
+        log_message "DEBUG" "Directory $dir qualifies as project: $file_count files, has indicators"
+        return 0
+    else
+        log_message "DEBUG" "Directory $dir not a project: no indicators found"
+        return 1
+    fi
+}
+
+# Function to check if directory should be excluded
+should_exclude_directory() {
+    local dir="$1"
+    local dirname=$(basename "$dir")
+    
+    # Default exclusions
+    local default_exclusions=(".git" "node_modules" ".vscode" ".idea" "build" "dist" "target" "__pycache__" ".pytest_cache")
+    local all_exclusions=("${default_exclusions[@]}" "${EXCLUDE_PATTERNS[@]}")
+    
+    for pattern in "${all_exclusions[@]}"; do
+        if [[ "$dirname" == "$pattern" ]] || [[ "$dirname" == *"$pattern"* ]]; then
+            log_message "DEBUG" "Excluding directory: $dir (matches pattern: $pattern)"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Function to find project directories
+find_project_directories() {
+    local search_root="$1"
+    local current_depth="${2:-0}"
+    
+    # Don't search deeper than max depth
+    if [ "$current_depth" -ge "$MAX_DEPTH" ]; then
+        return
+    fi
+    
+    # Find all subdirectories at this level
+    while IFS= read -r -d '' dir; do
+        # Skip if should be excluded
+        if should_exclude_directory "$dir"; then
+            continue
+        fi
+        
+        # Check if this directory is a project (silent check)
+        local file_count=$(find "$dir" -maxdepth 2 -type f 2>/dev/null | wc -l)
+        local has_indicator=0
+        
+        if [ "$file_count" -ge "$MIN_FILES" ]; then
+            # Combine default indicators with user-provided patterns
+            local all_indicators=("${DEFAULT_PROJECT_INDICATORS[@]}" "${INCLUDE_PATTERNS[@]}")
+            
+            # Check for project indicators
+            for indicator in "${all_indicators[@]}"; do
+                if [[ -e "$dir/$indicator" ]] || [[ $(find "$dir" -maxdepth 1 -name "$indicator" 2>/dev/null) ]]; then
+                    has_indicator=1
+                    break
+                fi
+            done
+            
+            if [ "$has_indicator" -eq 1 ]; then
+                echo "$dir"
+            fi
+        fi
+        
+        # Recursively search subdirectories
+        if [ "$current_depth" -lt "$((MAX_DEPTH - 1))" ]; then
+            find_project_directories "$dir" $((current_depth + 1))
+        fi
+        
+    done < <(find "$search_root" -maxdepth 1 -type d ! -path "$search_root" -print0 2>/dev/null)
+}
+
+# Function to get appropriate packager script
+get_packager_script() {
+    case "$PACKAGER_TYPE" in
+        "json")
+            echo "./code-packager"
+            ;;
+        "csv")
+            echo "./code-packager-csv"
+            ;;
+        "chunked")
+            echo "./code-packager-chunked"
+            ;;
+        *)
+            log_message "ERROR" "Unknown packager type: $PACKAGER_TYPE"
+            exit 1
+            ;;
+    esac
+}
+
+# Function to get output file extension
+get_output_extension() {
+    case "$PACKAGER_TYPE" in
+        "json")
+            echo "json"
+            ;;
+        "csv"|"chunked")
+            echo "csv"
+            ;;
+    esac
+}
+
+# Function to process a single project
+process_project() {
+    local project_dir="$1"
+    local project_name=$(basename "$project_dir")
+    local output_subdir="$OUTPUT_DIRECTORY/$project_name"
+    local packager_script=$(get_packager_script)
+    local output_ext=$(get_output_extension)
+    local output_file="$output_subdir/$project_name.$output_ext"
+    
+    log_message "INFO" "Processing project: $project_name"
+    
+    # Create output subdirectory
+    mkdir -p "$output_subdir"
+    
+    # Check if output already exists and skip if requested
+    if [ "$SKIP_EXISTING" -eq 1 ] && [ -f "$output_file" ]; then
+        log_message "INFO" "Skipping $project_name - output file already exists"
+        return 0
+    fi
+    
+    # Build packager command
+    local cmd_args=("-t" "$project_dir" "-o" "$output_file")
+    
+    # Check for saved configuration
+    local config_file=""
+    case "$PACKAGER_TYPE" in
+        "json")
+            config_file="$project_dir/.code-packager-config"
+            ;;
+        "csv")
+            config_file="$project_dir/.code-packager-csv-config"
+            ;;
+        "chunked")
+            config_file="$project_dir/.code-packager-chunked-config"
+            ;;
+    esac
+    
+    local has_config=0
+    if [ "$USE_SAVED_CONFIG" -eq 1 ] && [ -f "$config_file" ]; then
+        log_message "INFO" "Found saved configuration for $project_name"
+        has_config=1
+    fi
+    
+    # Determine if we should use interactive mode
+    local use_interactive_for_project="$USE_INTERACTIVE"
+    if [ "$has_config" -eq 1 ] && [ "$USE_INTERACTIVE" -eq 1 ]; then
+        # Ask user if they want to use saved config or interactive mode
+        echo "Project: $project_name"
+        echo "Found saved configuration. Choose:"
+        echo "1) Use saved configuration"
+        echo "2) Use interactive TUI mode"
+        echo "3) Skip this project"
+        read -p "Choice (1-3): " choice
+        
+        case "$choice" in
+            1)
+                use_interactive_for_project=0
+                ;;
+            2)
+                use_interactive_for_project=1
+                ;;
+            3)
+                log_message "INFO" "Skipping project $project_name by user choice"
+                return 0
+                ;;
+            *)
+                log_message "WARN" "Invalid choice, using saved configuration"
+                use_interactive_for_project=0
+                ;;
+        esac
+    fi
+    
+    # Add TUI selector if interactive mode
+    if [ "$use_interactive_for_project" -eq 1 ]; then
+        cmd_args+=("-S" "tui")
+    fi
+    
+    log_message "DEBUG" "Running: $packager_script ${cmd_args[*]}"
+    
+    # Execute the packager
+    local start_time=$(date +%s)
+    if "$packager_script" "${cmd_args[@]}"; then
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+        
+        # Create metadata file
+        local metadata_file="$output_subdir/metadata.json"
+        jq -n \
+            --arg project_name "$project_name" \
+            --arg project_path "$project_dir" \
+            --arg output_file "$output_file" \
+            --arg packager_type "$PACKAGER_TYPE" \
+            --arg processing_time "$duration" \
+            --arg timestamp "$(date -Iseconds)" \
+            --arg has_saved_config "$has_config" \
+            --arg used_interactive "$use_interactive_for_project" \
+            '{
+                project_name: $project_name,
+                project_path: $project_path,
+                output_file: $output_file,
+                packager_type: $packager_type,
+                processing_time_seconds: ($processing_time | tonumber),
+                timestamp: $timestamp,
+                had_saved_config: ($has_saved_config == "1"),
+                used_interactive_mode: ($used_interactive == "1"),
+                status: "success"
+            }' > "$metadata_file"
+        
+        log_message "INFO" "Successfully processed $project_name in ${duration}s"
+        return 0
+    else
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+        
+        # Create error metadata file
+        local metadata_file="$output_subdir/metadata.json"
+        jq -n \
+            --arg project_name "$project_name" \
+            --arg project_path "$project_dir" \
+            --arg packager_type "$PACKAGER_TYPE" \
+            --arg processing_time "$duration" \
+            --arg timestamp "$(date -Iseconds)" \
+            --arg error "Packager command failed" \
+            '{
+                project_name: $project_name,
+                project_path: $project_path,
+                packager_type: $packager_type,
+                processing_time_seconds: ($processing_time | tonumber),
+                timestamp: $timestamp,
+                status: "error",
+                error_message: $error
+            }' > "$metadata_file"
+        
+        log_message "ERROR" "Failed to process project: $project_name"
+        return 1
+    fi
+}
+
+# Function to generate batch report
+generate_batch_report() {
+    local report_file="$OUTPUT_DIRECTORY/batch_report.json"
+    local metadata_files=()
+    local total_projects=0
+    local successful_projects=0
+    local failed_projects=0
+    local total_time=0
+    
+    log_message "INFO" "Generating batch report"
+    
+    # Find all metadata files
+    while IFS= read -r -d '' file; do
+        metadata_files+=("$file")
+    done < <(find "$OUTPUT_DIRECTORY" -name "metadata.json" -print0 2>/dev/null)
+    
+    # Process metadata files
+    local projects_array="["
+    local first=1
+    
+    for metadata_file in "${metadata_files[@]}"; do
+        if [ "$first" -eq 0 ]; then
+            projects_array+=","
+        fi
+        first=0
+        
+        local metadata_content=$(cat "$metadata_file")
+        projects_array+="$metadata_content"
+        
+        total_projects=$((total_projects + 1))
+        
+        local status=$(echo "$metadata_content" | jq -r '.status')
+        if [ "$status" = "success" ]; then
+            successful_projects=$((successful_projects + 1))
+        else
+            failed_projects=$((failed_projects + 1))
+        fi
+        
+        local project_time=$(echo "$metadata_content" | jq -r '.processing_time_seconds // 0')
+        total_time=$((total_time + project_time))
+    done
+    
+    projects_array+="]"
+    
+    # Generate final report
+    jq -n \
+        --arg timestamp "$(date -Iseconds)" \
+        --arg packager_type "$PACKAGER_TYPE" \
+        --arg source_directory "$SOURCE_DIRECTORY" \
+        --arg output_directory "$OUTPUT_DIRECTORY" \
+        --arg total_projects "$total_projects" \
+        --arg successful_projects "$successful_projects" \
+        --arg failed_projects "$failed_projects" \
+        --arg total_time "$total_time" \
+        --argjson projects "$projects_array" \
+        '{
+            batch_processing_report: {
+                timestamp: $timestamp,
+                packager_type: $packager_type,
+                source_directory: $source_directory,
+                output_directory: $output_directory,
+                summary: {
+                    total_projects: ($total_projects | tonumber),
+                    successful_projects: ($successful_projects | tonumber),
+                    failed_projects: ($failed_projects | tonumber),
+                    success_rate: (($successful_projects | tonumber) / ($total_projects | tonumber) * 100),
+                    total_processing_time_seconds: ($total_time | tonumber)
+                },
+                projects: $projects
+            }
+        }' > "$report_file"
+    
+    log_message "INFO" "Batch report saved to: $report_file"
+    log_message "INFO" "Summary: $successful_projects/$total_projects projects processed successfully"
+}
+
+# Main execution starts here
+check_dependencies
+
+# Parse command line arguments
+while getopts "s:o:t:d:m:i:c:k:p:x:j:vh-" opt; do
+    case $opt in
+        s) SOURCE_DIRECTORY="${OPTARG}" ;;
+        o) OUTPUT_DIRECTORY="${OPTARG}" ;;
+        t) PACKAGER_TYPE="${OPTARG}" ;;
+        d) MAX_DEPTH="${OPTARG}" ;;
+        m) MIN_FILES="${OPTARG}" ;;
+        i) USE_INTERACTIVE="${OPTARG}" ;;
+        c) USE_SAVED_CONFIG="${OPTARG}" ;;
+        k) SKIP_EXISTING="${OPTARG}" ;;
+        p) INCLUDE_PATTERNS+=("${OPTARG}") ;;
+        x) EXCLUDE_PATTERNS+=("${OPTARG}") ;;
+        j) PARALLEL_JOBS="${OPTARG}" ;;
+        v) VERBOSE=1 ;;
+        h) show_help
+           exit 0 ;;
+        -) case "${OPTARG}" in
+             version) show_version
+                      exit 0 ;;
+             help) show_help
+                   exit 0 ;;
+             verbose) VERBOSE=1 ;;
+             *) echo "Error: Invalid option --${OPTARG}. Use -h or --help for usage information." >&2
+                exit 1 ;;
+           esac ;;
+        \?) echo "Error: Invalid option -${OPTARG}. Use -h or --help for usage information." >&2
+            exit 1 ;;
+        :) echo "Error: Option -${OPTARG} requires an argument." >&2
+           exit 1 ;;
+        *) echo "Error: Invalid option -${opt}. Use -h or --help for usage information." >&2
+           exit 1 ;;
+    esac
+done
+
+# Validate required parameters
+if [ -z "$SOURCE_DIRECTORY" ] || [ -z "$OUTPUT_DIRECTORY" ]; then
+    echo "Error: Source directory (-s) and output directory (-o) are required."
+    show_help
+    exit 1
+fi
+
+# Validate source directory exists
+if [ ! -d "$SOURCE_DIRECTORY" ]; then
+    log_message "ERROR" "Source directory does not exist: $SOURCE_DIRECTORY"
+    exit 1
+fi
+
+# Validate packager type
+case "$PACKAGER_TYPE" in
+    "json"|"csv"|"chunked")
+        ;;
+    *)
+        log_message "ERROR" "Invalid packager type: $PACKAGER_TYPE. Must be 'json', 'csv', or 'chunked'"
+        exit 1
+        ;;
+esac
+
+# Create output directory
+mkdir -p "$OUTPUT_DIRECTORY"
+
+# Validate output directory is writable
+if [ ! -w "$OUTPUT_DIRECTORY" ]; then
+    log_message "ERROR" "Output directory is not writable: $OUTPUT_DIRECTORY"
+    exit 1
+fi
+
+log_message "INFO" "Starting batch processing"
+log_message "INFO" "Source: $SOURCE_DIRECTORY"
+log_message "INFO" "Output: $OUTPUT_DIRECTORY"
+log_message "INFO" "Packager: $PACKAGER_TYPE"
+log_message "INFO" "Max depth: $MAX_DEPTH"
+log_message "INFO" "Min files: $MIN_FILES"
+
+# Find all project directories
+log_message "INFO" "Discovering projects..."
+mapfile -t projects < <(find_project_directories "$SOURCE_DIRECTORY")
+
+if [ ${#projects[@]} -eq 0 ]; then
+    log_message "WARN" "No projects found in $SOURCE_DIRECTORY"
+    exit 0
+fi
+
+log_message "INFO" "Found ${#projects[@]} projects to process"
+
+# Process each project
+for project in "${projects[@]}"; do
+    process_project "$project"
+done
+
+# Generate final report
+generate_batch_report
+
+log_message "INFO" "Batch processing completed"
