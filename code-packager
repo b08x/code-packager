@@ -3,6 +3,29 @@
 # Version information
 VERSION="0.4.0"
 
+# Signal handling and cleanup
+cleanup() {
+    echo -e "\n\nOperation cancelled by user (CTRL+C)"
+    
+    # Clean up temporary files if they exist
+    if [ -n "$SELECTED_FILES_LIST" ] && [ -f "$SELECTED_FILES_LIST" ]; then
+        rm -f "$SELECTED_FILES_LIST"
+        echo "Cleaned up temporary file: $SELECTED_FILES_LIST"
+    fi
+    
+    # Remove incomplete output file if it exists
+    if [ -n "$OUTPUT_FILE" ] && [ -f "$OUTPUT_FILE" ]; then
+        rm -f "$OUTPUT_FILE"
+        echo "Removed incomplete output file: $OUTPUT_FILE"
+    fi
+    
+    echo "Exiting gracefully..."
+    exit 130
+}
+
+# Trap SIGINT (CTRL+C) to call cleanup function
+trap cleanup SIGINT
+
 # Default values
 INCLUDE_EXT=()        # Array to store include extensions
 EXCLUDE_EXT=()        # Array to store exclude extensions

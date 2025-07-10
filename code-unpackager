@@ -3,6 +3,29 @@
 # Version information
 VERSION="0.3.1"
 
+# Signal handling and cleanup
+cleanup() {
+    echo -e "\n\nOperation cancelled by user (CTRL+C)"
+    
+    # Remove incomplete destination directory if it was created during this session
+    if [ -n "$DESTINATION_DIRECTORY" ] && [ -d "$DESTINATION_DIRECTORY" ]; then
+        # Only remove if it looks like it was created by this script
+        # (check if it's empty or contains only partially restored files)
+        if [ -z "$(ls -A "$DESTINATION_DIRECTORY" 2>/dev/null)" ]; then
+            rmdir "$DESTINATION_DIRECTORY" 2>/dev/null
+            echo "Removed empty destination directory: $DESTINATION_DIRECTORY"
+        else
+            echo "Warning: Destination directory contains files. Manual cleanup may be needed: $DESTINATION_DIRECTORY"
+        fi
+    fi
+    
+    echo "Exiting gracefully..."
+    exit 130
+}
+
+# Trap SIGINT (CTRL+C) to call cleanup function
+trap cleanup SIGINT
+
 # Function to display help
 show_help() {
     echo "Usage: $0 -j <json_file> -d <destination_directory> [options]"

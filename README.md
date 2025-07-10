@@ -136,6 +136,8 @@ Batch processor for handling multiple projects at scale:
   - Available as a Homebrew formula for macOS users and supports manual installation on various platforms. The scripts offer a range of options to customize the code packaging and unpacking process, providing flexibility and control over the output.
 - 🖼️ **Binary File Handling:**
   - Automatically omits the contents of binary files for efficiency, ensuring that only relevant code is included in the packaged output. This feature streamlines the code packaging process and enhances the usability of the resulting JSON file.
+- 🛡️ **Graceful Exit Handling:**
+  - Both `code-packager` and `code-unpackager` handle CTRL+C interruptions gracefully, cleaning up temporary files and incomplete outputs to prevent corrupted states. The tools exit with proper status codes and informative messages.
 
 ## 🚀 Installation
 
