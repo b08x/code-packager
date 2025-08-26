@@ -82,8 +82,8 @@ EOF
 
 # Function to cleanup test files and directories
 cleanup() {
-    rm -f test.json test_vector.json invalid.json
-    rm -rf test_output test_vector_output
+    rm -f test.json test_vector.json invalid.json notebook_test.json
+    rm -rf test_output test_vector_output notebook_output
 }
 
 # Test case 1: Basic functionality
@@ -139,7 +139,7 @@ test_version_info() {
 # Test case 5: Displaying help information
 test_help_info() {
     local options="-h"
-    local expected_output_pattern="Usage: ./code-unpackager -j <json_file> -d <destination_directory> \\[options\\]"
+    local expected_output_pattern="Usage: ./code-unpackager -j <json_file> -d <destination_directory> \[options\]"
     run_test "Displaying help information" "$options" "$expected_output_pattern"
 }
 
@@ -180,6 +180,41 @@ test_vector_store_format() {
     ls -R test_vector_output
 }
 
+# Test case 8: Unpacking a converted Jupyter Notebook
+test_unpacking_converted_notebook() {
+    cat << EOF > notebook_test.json
+{
+  "files": [
+    {
+      "filename": "test.md",
+      "content": "# Test Notebook",
+      "path": "/"
+    }
+  ]
+}
+EOF
+    local options="-j notebook_test.json -d notebook_output -s"
+    local expected_output_pattern="Folder structure restored to: notebook_output"
+    run_test "Unpacking a converted Jupyter Notebook" "$options" "$expected_output_pattern"
+
+    # Verify the created file
+    if [[ -f "notebook_output/test.md" ]]; then
+        echo "File structure for converted notebook verified."
+    else
+        echo "File structure verification for converted notebook failed."
+    fi
+
+    # Verify file contents
+    if [[ "$(cat notebook_output/test.md)" == "# Test Notebook" ]]; then
+        echo "File contents for converted notebook verified."
+    else
+        echo "File contents verification for converted notebook failed."
+    fi
+
+    rm -rf notebook_output
+    rm -f notebook_test.json
+}
+
 # Clean up before running tests
 cleanup
 
@@ -191,6 +226,7 @@ test_version_info
 test_help_info
 test_invalid_json
 test_vector_store_format
+test_unpacking_converted_notebook
 
 # Clean up after running tests
 cleanup
