@@ -138,6 +138,10 @@ Batch processor for handling multiple projects at scale:
   - Automatically omits the contents of binary files for efficiency, ensuring that only relevant code is included in the packaged output. This feature streamlines the code packaging process and enhances the usability of the resulting JSON file.
 - 🛡️ **Graceful Exit Handling:**
   - Both `code-packager` and `code-unpackager` handle CTRL+C interruptions gracefully, cleaning up temporary files and incomplete outputs to prevent corrupted states. The tools exit with proper status codes and informative messages.
+- **Jupyter Notebook Conversion:**
+  - Automatically converts Jupyter Notebooks (`.ipynb`) to Markdown format during the packaging process.
+  - The conversion is done in-memory using `jupyter nbconvert`, so no temporary files are created.
+  - The resulting Markdown content is included in the output, and the filename is changed to have a `.md` extension.
 
 ## 🚀 Installation
 
@@ -163,6 +167,7 @@ That's it! All four utilities (`code-packager`, `code-unpackager`, `code-package
 - `fd` (modern find replacement)
 - `gum` (for TUI file selector)
 - `yad` (optional, for GUI file selector)
+- `jupyter` (for .ipynb conversion)
 
 On a Debian-based Linux distribution, you can install these dependencies with:
 

@@ -197,7 +197,7 @@ csv_escape() {
 
 # Check for required dependencies
 check_dependencies() {
-    local dependencies=("git" "file" "zip" "fd" "gum")
+    local dependencies=("git" "file" "zip" "fd" "gum" "jupyter")
     local missing_deps=0
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
@@ -640,6 +640,7 @@ process_file_csv() {
     local filesize=$($STAT_CMD "$file")
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
+        local extension="${filename##*.}"
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
         # For vector store format, construct the file path with project name prefix
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
@@ -659,6 +660,22 @@ process_file_csv() {
             else
                 content="[Binary file - content not included]"
             fi
+        elif [[ "$extension" == "ipynb" ]]; then
+            # Convert Jupyter Notebook to Markdown
+            local file_content
+            if ! file_content=$(jupyter nbconvert --to markdown --stdout "$file" 2>/dev/null); then
+                echo "Warning: Failed to convert '$file'. Skipping." >&2
+                return 1
+            fi
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                content="File: ${vector_path%.*}.md
+
+${file_content}"
+            else
+                content="$file_content"
+            fi
+            # Update filename to .md
+            filename="${filename%.*}.md"
         else
             local file_content=$(cat "$file")
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then

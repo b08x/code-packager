@@ -197,7 +197,7 @@ is_binary() {
 
 # Check for required dependencies
 check_dependencies() {
-    local dependencies=("jq" "git" "file" "zip" "fd" "gum")
+    local dependencies=("jq" "git" "file" "zip" "fd" "gum" "jupyter")
     local missing_deps=0
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
@@ -631,6 +631,7 @@ process_file() {
     local filesize=$($STAT_CMD "$file")
     if [ "$filesize" -le $((MAX_SIZE * 1024)) ]; then
         local filename=$(basename "$file")
+        local extension="${filename##*.}"
         local dirpath=$(dirname "$file" | sed "s|^$DIRECTORY_PATH||")
         # For vector store format, construct the file path with project name prefix
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ] && [ -n "$PROJECT_NAME" ]; then
@@ -646,6 +647,20 @@ process_file() {
             else
                 local content="null" # Do not include content for binary files
             fi
+        elif [[ "$extension" == "ipynb" ]]; then
+            # Convert Jupyter Notebook to Markdown and capture the output
+            local file_content
+            if ! file_content=$(jupyter nbconvert --to markdown --stdout "$file" 2>/dev/null); then
+                echo "Warning: Failed to convert '$file'. Skipping." >&2
+                return 1
+            fi
+            if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+                local content=$(jq -Rs . <<<"File: ${vector_path%.*}.md
+
+${file_content}")
+            else
+                local content=$(jq -Rs . <<<"$file_content")
+            fi
         else
             local file_content=$(cat "$file")
             if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
@@ -658,8 +673,14 @@ ${file_content}")
         fi
 
         if [ "$VECTOR_STORE_FORMAT" -eq 1 ]; then
+            if [[ "$extension" == "ipynb" ]]; then
+                filename="${filename%.*}.md"
+            fi
             echo "{\"content\":$content, \"metadata\":{\"filename\":\"$filename\", \"path\":\"$dirpath/\"}}"
         else
+            if [[ "$extension" == "ipynb" ]]; then
+                filename="${filename%.*}.md"
+            fi
             echo "{\"filename\":\"$filename\", \"content\":$content, \"path\":\"$dirpath/\"}"
         fi
     fi

@@ -1,5 +1,10 @@
 ### Change Log
 
+- [Aug 26, 2025] Added Jupyter Notebook to Markdown conversion
+  - All packager scripts (`code-packager`, `code-packager-csv`, `code-packager-chunked`) now automatically convert `.ipynb` files to Markdown.
+  - Conversion is handled in-memory using `jupyter nbconvert`.
+  - Added `jupyter` as a new dependency.
+  - Implemented error handling for the conversion process.
 - [Jun 07, 2025] Enhanced TUI selector with step-by-step workflow and improved directory/file filtering
   - **Complete TUI workflow redesign**: Replaced fzf with gum for a guided step-by-step selection process
     1. Select base directory to package
