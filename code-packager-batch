@@ -302,6 +302,9 @@ process_project() {
     
     # Build packager command
     local cmd_args=("-t" "$project_dir" "-o" "$output_file")
+    if [[ "$PACKAGER_TYPE" == "csv" || "$PACKAGER_TYPE" == "chunked" ]]; then
+        cmd_args+=("-e" ".csv")
+    fi
     
     # Check for saved configuration
     local config_file=""

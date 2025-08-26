@@ -5,7 +5,7 @@ VERSION="0.4.0-chunked"
 
 # Default values
 INCLUDE_EXT=()        # Array to store include extensions
-EXCLUDE_EXT=()        # Array to store exclude extensions
+EXCLUDE_EXT=(".csv")        # Array to store exclude extensions
 INCLUDE_FILES=()      # Array to store include filenames
 EXCLUDE_FILES=()      # Array to store exclude filenames
 EXCLUDE_DIRS=()       # Array to store exclude directories
@@ -128,32 +128,42 @@ load_config() {
         DIRECTORY_PATH=$(jq -r '.directory_path // empty' "$config_file")
         OUTPUT_FILE=$(jq -r '.output_file // empty' "$config_file")
         
-        # Load arrays - only if they have content
-        INCLUDE_EXT=()
-        EXCLUDE_EXT=()
-        INCLUDE_FILES=()
-        EXCLUDE_FILES=()
-        EXCLUDE_DIRS=()
-        INCLUDE_DIRS=()
-        
-        # Load arrays if they exist and have content
-        if [[ $(jq -r '.include_ext | length' "$config_file") -gt 0 ]]; then
-            readarray -t INCLUDE_EXT < <(jq -r '.include_ext[]' "$config_file")
+        # Load arrays if they exist in config, overwriting defaults
+        if jq -e '.include_ext' "$config_file" >/dev/null; then
+            INCLUDE_EXT=()
+            if [[ $(jq -r '.include_ext | length' "$config_file") -gt 0 ]]; then
+                readarray -t INCLUDE_EXT < <(jq -r '.include_ext[]' "$config_file")
+            fi
         fi
-        if [[ $(jq -r '.exclude_ext | length' "$config_file") -gt 0 ]]; then
-            readarray -t EXCLUDE_EXT < <(jq -r '.exclude_ext[]' "$config_file")
+        if jq -e '.exclude_ext' "$config_file" >/dev/null; then
+            EXCLUDE_EXT=()
+            if [[ $(jq -r '.exclude_ext | length' "$config_file") -gt 0 ]]; then
+                readarray -t EXCLUDE_EXT < <(jq -r '.exclude_ext[]' "$config_file")
+            fi
         fi
-        if [[ $(jq -r '.include_files | length' "$config_file") -gt 0 ]]; then
-            readarray -t INCLUDE_FILES < <(jq -r '.include_files[]' "$config_file")
+        if jq -e '.include_files' "$config_file" >/dev/null; then
+            INCLUDE_FILES=()
+            if [[ $(jq -r '.include_files | length' "$config_file") -gt 0 ]]; then
+                readarray -t INCLUDE_FILES < <(jq -r '.include_files[]' "$config_file")
+            fi
         fi
-        if [[ $(jq -r '.exclude_files | length' "$config_file") -gt 0 ]]; then
-            readarray -t EXCLUDE_FILES < <(jq -r '.exclude_files[]' "$config_file")
+        if jq -e '.exclude_files' "$config_file" >/dev/null; then
+            EXCLUDE_FILES=()
+            if [[ $(jq -r '.exclude_files | length' "$config_file") -gt 0 ]]; then
+                readarray -t EXCLUDE_FILES < <(jq -r '.exclude_files[]' "$config_file")
+            fi
         fi
-        if [[ $(jq -r '.exclude_dirs | length' "$config_file") -gt 0 ]]; then
-            readarray -t EXCLUDE_DIRS < <(jq -r '.exclude_dirs[]' "$config_file")
+        if jq -e '.exclude_dirs' "$config_file" >/dev/null; then
+            EXCLUDE_DIRS=()
+            if [[ $(jq -r '.exclude_dirs | length' "$config_file") -gt 0 ]]; then
+                readarray -t EXCLUDE_DIRS < <(jq -r '.exclude_dirs[]' "$config_file")
+            fi
         fi
-        if [[ $(jq -r '.include_dirs | length' "$config_file") -gt 0 ]]; then
-            readarray -t INCLUDE_DIRS < <(jq -r '.include_dirs[]' "$config_file")
+        if jq -e '.include_dirs' "$config_file" >/dev/null; then
+            INCLUDE_DIRS=()
+            if [[ $(jq -r '.include_dirs | length' "$config_file") -gt 0 ]]; then
+                readarray -t INCLUDE_DIRS < <(jq -r '.include_dirs[]' "$config_file")
+            fi
         fi
         
         # Load scalar values
